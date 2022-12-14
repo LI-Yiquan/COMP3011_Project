@@ -1,0 +1,49 @@
+Search for diffusion:
+Paper1 diffusion at 1206
+Paper2 diffusion at 939
+Paper3 diffusion at 935
+Paper4 diffusion at 1072
+Paper5 diffusion at 594
+Paper6 diffusion at 1739
+Paper7 diffusion at 1293
+Paper8 diffusion at 1261
+
+Search for Stanford:
+Paper1 Stanford at -1
+Paper2 Stanford at 76806
+Paper3 Stanford at -1
+Paper4 Stanford at -1
+Paper5 Stanford at -1
+Paper6 Stanford at -1
+Paper7 Stanford at -1
+Paper8 Stanford at -1
+
+Search for PDE:
+Paper1 PDE at -1
+Paper2 PDE at 112806
+Paper3 PDE at -1
+Paper4 PDE at -1
+Paper5 PDE at 105457
+Paper6 PDE at -1
+Paper7 PDE at -1
+Paper8 PDE at -1
+
+Search for Song:
+Paper1 Song at 8996
+Paper2 Song at 62910
+Paper3 Song at 47446
+Paper4 Song at 46950
+Paper5 Song at 6489
+Paper6 Song at -1
+Paper7 Song at 8301
+Paper8 Song at -1
+
+Search for MIT:
+Paper1 MIT at 110587
+Paper2 MIT at 143335
+Paper3 MIT at -1
+Paper4 MIT at -1
+Paper5 MIT at 216279
+Paper6 MIT at 51000
+Paper7 MIT at 99432
+Paper8 MIT at -1

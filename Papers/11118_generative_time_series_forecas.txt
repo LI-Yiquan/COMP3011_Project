@@ -1,0 +1,1583 @@
+    Generative Time Series Forecasting with Diffusion,
+             Denoise, and Disentanglement
+
+
+                Yan Li§ † ∗ , Xinjiang Lu† , Yaqing Wang† , Dejing Dou†
+                        †
+                          Business Intelligence Lab, Baidu Research
+                                 §
+                                   Zhejiang University, China
+       ly21121@zju.edu.cn, {luxinjiang,wangyaqing01,doudejing}@baidu.com
+
+
+
+                                               Abstract
+
+         Time series forecasting has been a widely explored task that is of great importance
+         in many applications. However, it is common that real-world time series data
+         are recorded in a short time period, which results in a big gap between the deep
+         model and the limited and noisy time series. In this work, we propose to address
+         the time series forecasting problem with generative modeling and propose a bidi-
+         rectional variational auto-encoder (BVAE) equipped with diffusion, denoise, and
+         disentanglement, namely D3 VAE. Specifically, a coupled diffusion probabilistic
+         model is proposed to augment the time series data without increasing the aleatoric
+         uncertainty and implement a more tractable inference process with BVAE. To
+         ensure the generated series move toward the true target, we further propose to adapt
+         and integrate the multiscale denoising score matching into the diffusion process for
+         time series forecasting. In addition, to enhance the interpretability and stability of
+         the prediction, we treat the latent variable in a multivariate manner and disentangle
+         them on top of minimizing total correlation. Extensive experiments on both syn-
+         thetic and real-world data show that D3 VAE outperforms competitive algorithms
+         with remarkable margins. Our implementation is available at https://github.
+         com/PaddlePaddle/PaddleSpatial/tree/main/research/D3VAE.
+
+
+1   Introduction
+Time series forecasting is of great importance for risk-averse and decision-making. Traditional
+RNN-based methods capture temporal dependencies of the time series to predict the future. Long
+short-term memories (LSTMs) and gated recurrent units (GRUs) [105, 35, 32, 80] introduce the
+gate functions into the cell structure to handle long-term dependencies effectively. The models
+based on convolutional neural networks (CNNs) capture complex inner patterns of the time series
+through convolutional operations [60, 8, 7]. Recently, the Transformer-based models have shown great
+performance in time series forecasting [101, 106, 55, 61] with the help of multi-head self-attention.
+However, one big issue of neural networks in time series forecasting is the uncertainty [31, 1]
+resulting from the properties of the deep structure. The models based on vector autoregression
+(VAR) [12, 24, 51] try to model the distribution of time series from hidden states which could provide
+more reliability to the prediction, while the performance is not satisfactory [58].
+Interpretable representation learning is another merit of time series forecasting. Variational auto-
+encoders (VAEs) have shown not only the superiority in modeling latent distributions of the data and
+reducing the gradient noise [75, 54, 63, 89] but also the interpretability of time series forecasting [26,
+27]. However, the interpretability of VAEs might be inferior due to the entangled latent variables.
+   ∗
+     This work was done when the first author was an intern at Baidu Research under the supervision of the
+second author.
+
+
+36th Conference on Neural Information Processing Systems (NeurIPS 2022).
+There have been efforts to learn representation disentangling [50, 6, 39], which show that the well-
+disentangled representation can improve the performance and robustness of the algorithm.
+Moreover, real-world time series are often noisy and recorded in a short time period, which may result
+in overfitting and generalization issues [30, 93, 107, 81]1 . To this end, we address the time series
+forecasting problem with generative modeling. Specifically, we propose a bidirectional variational
+auto-encoder (BVAE) equipped with diffusion, denoise, and disentanglement, namely D3 VAE. More
+specifically, we first propose a coupled diffusion probabilistic model to remedy the limitation of time
+series data by augmenting the input time series, as well as the output time series, inspired by the
+forward process of the diffusion model [85, 41, 70, 74]. Besides, we adapt the Nouveau VAE [89]
+to the time series forecasting task and develop a BVAE as a substitute for the reverse process of the
+diffusion model. In this way, the expressiveness of the diffusion model plus the tractability of the VAE
+can be leveraged together for generative time series forecasting. Though the merit of generalizability
+is helpful, the diffused samples might be corrupted, which results in a generative model moving
+toward the noisy target. Therefore, we further develop a scaled denoising score-matching network for
+cleaning diffused target time series. In addition, we disentangle the latent variables of the time series
+by assuming that different disentangled dimensions of the latent variables correspond to different
+temporal patterns (such as trend, seasonality, etc.). Our contributions can be summarized as:
+
+             • We propose a coupled diffusion probabilistic model aiming to reduce the aleatoric uncertainty
+               of the time series and improve the generalization capability of the generative model.
+             • We integrate the multiscale denoising score matching into the coupled diffusion process to
+               improve the accuracy of generated results.
+             • We disentangle the latent variables of the generative model to improve the interpretability
+               for time series forecasting.
+             • Extensive experiments on both synthetic datasets and real-world datasets demonstrate that
+               D3 VAE outperforms competitive baselines with satisfactory margins.
+
+2         Methodology
+2.1        Generative Time Series Forecasting
+
+Problem Formulation. Given an input multivariate time series X = {x1 , x2 , · · · , xn | xi ∈ Rd }
+                                                                                     ′    ′
+and the corresponding target time series Y = {yn+1 , yn+2 , · · · , yn+m | yj ∈ Rd } (d ≤ d). We
+assume that Y can be generated from latent variables Z ∈ ΩZ that can be drawn from the Gaussian
+distribution Z ∼ p(Z|X). The latent distribution can be further formulated as pϕ (Z|X) = gϕ (X)
+where gϕ denotes a nonlinear function. Then, the data density of the target series is given by:
+                                      Z
+                            pθ (Y ) =     pϕ (Z|X)(Y − fθ (Z))dZ ,                              (1)
+                                                 ΩZ
+where fθ denotes a parameterized function. The target time series can be obtained directly by sampling
+from pθ (Y ).
+In our problem setting, time series forecasting is to learn the representation Z that captures useful
+signals of X, and map the low dimensional X to the latent space with high expressiveness. The
+framework overview of D3 VAE is demonstrated in Fig. 1. Before diving into the detailed techniques,
+we first introduce a preliminary proposition.
+Proposition 1. Given a time series X and its inherent noise ϵX , we have the decomposition:
+X = ⟨Xr , ϵX ⟩, where Xr is the ideal time series data without noise. Xr and ϵX are independent of
+each other. Let pϕ (Z|X) = pϕ (Z|Xr , ϵX ), the estimated target series Yb can be generated with the
+distribution pθ (Yb |Z) = pθ (Ybr |Z) · pθ (ϵYb |Z) where Ybr is the ideal part of Yb and ϵYb is the estimation
+noise. Without loss of generality, Ybr can be fully captured by the model. That is, ∥Yr − Ybr ∥ −→ 0
+where Yr is the ideal part of ground truth target series Y . In addition, Y can be decomposed as
+Y = ⟨Ybr , ϵY ⟩ (ϵY denotes the noise of Y ). Therefore, the error between ground truth and prediction,
+i.e., ∥Y − Yb ∥ = ∥ϵY − ϵYb ∥ > 0, can be deemed as the combination of aleatoric uncertainty and
+epistemic uncertainty.
+      1
+          The detailed literature review can be found in Appendix A.
+
+
+                                                           2
+Figure 1: The framework overview of D3 VAE. First, both the input and output series are augmented
+simultaneously with the coupled diffusion process. Then the diffused input series are fed into a
+proposed BVAE model for inference, which can be deemed as a reverse process. To make the
+estimated target move toward the true target series, a denoising score-matching mechanism is further
+applied. Meanwhile, the latent states in BVAE are leveraged for disentangling such that the model
+interpretability and reliability can be improved.
+
+
+2.2     Coupled Diffusion Probabilistic Model
+
+The diffusion probabilistic model (diffusion model for brevity) is a family of latent variable models
+aiming to generate high-quality samples. To equip the generative time series forecasting model with
+high expressiveness, a coupled forward process is developed to augment the input series and target
+series synchronously. Besides, in the forecasting task, more tractable and accurate prediction is
+expected. To achieve this, we propose a bidirectional variational auto-encoder (BVAE) to take the
+place of the reverse process in the diffusion model. We present the technical details in the following
+two parts, respectively.
+
+2.2.1    Coupled Diffusion Process
+The forward diffusion process is fixed to a Markov chain that gradually adds Gaussian noise to the
+data [85, 41]. To diffuse the input and output series, we propose a coupled diffusion process, which is
+demonstrated in Fig. 2. Specifically, given the input X = X (0) ∼ q(X (0) ), the approximate posterior
+q(X (1:T ) |X (0) ) can be obtained as
+                            T
+                            Y                                                                    p
+  q(X (1:T ) |X (0) ) =           q(X (t) |X (t−1) ) ,       q(X (t) |X (t−1) ) = N (X (t) ;      1 − βt X (t) , βt I) , (2)
+                            t=1
+
+where a uniformly increasing variance schedule β = {β1 , · · · , βT | βt ∈ [0, 1)} is employed to
+                                                                               Qt
+control the level of noise to be added. Then, let αt = 1 − βt and ᾱt = s=1 αs , we have
+                                                        √
+                           q(X (t) |X (0) ) = N (X (t) ; ᾱt X (0) , (1 − ᾱt )I) .           (3)
+
+Furthermore, according to Proposition 1 we decompose X (0) as X (0) = ⟨Xr , ϵX ⟩. Then, with Eq. (3),
+the diffused X (t) can be decomposed as follows:
+                       √                           √        √
+              X (t) = ᾱt X (0) + (1 − ᾱt )δX := ⟨ ᾱt Xr , ᾱt ϵX + (1 − ᾱt )δX ⟩ ,            (4)
+                                                   | {z } |           {z          }
+                                                                     ideal part           noisy part
+
+where δX denotes the standard Gaussian noise of X. As α can be determined when the variance
+                                                                                     er(t) = √ᾱt Xr
+schedule β is known, the ideal part is also determined in the diffusion process. Let X
+     (t)  √
+and δXe = ᾱt ϵX + (1 − ᾱt )δX , then, according to Proposition 1 and Eq. (4), we have
+                                         er(t) , δ (t) ) ,
+         pϕ (Z (t) |X (t) ) = pϕ (Z (t) |X
+                                                                                                             (t)
+                                                               pθ (Yb (t) |Z (t) ) = pθ (Ybr(t) |Z (t) )pθ (δYb |Z (t) ) ,   (5)
+                                                  Xe
+
+
+                                                                 3
+Figure 2: An illustration of the coupled diffusion process. The input X (0) and the corresponding
+target Y (0) are diffused simultaneously with different variance schedules. β = {β1 , · · · , βT } is the
+variance schedule for the input and β ′ = {β1′ , · · · , βT′ } is for the target.
+
+        (t)
+where δYb denotes the generated noise of Yb (t) . To relieve the effect of aleatoric uncertainty resulting
+from time series data, we further apply the diffusion process to the target series Y = Y (0) ∼ q(Y (0) ).
+In particular, a scale parameter ω ∈ (0, 1) is adopted, such that βt′ = ωβt , αt′ = 1 − βt′ and
+       Qt
+ᾱt′ = s=1 αs′ . Then, according to Proposition 1, we can obtain the following decomposition
+(similar to Eq. (4)):
+                                                                                                 (t)
+        Y (t) = ᾱt′ Y (0) + (1 − ᾱt′ )δY := ⟨ ᾱt′ Yr , ᾱt′ ϵY + (1 − ᾱt′ )δY ⟩ = ⟨Yer(t) , δYe ⟩ .
+                p                              p         p
+                                                                                                        (6)
+                                               | {z } |            {z            }
+                                                  ideal part       noisy part
+
+                                       (t)  (t)
+Consequently, we have q(Y (t) ) = q(Yer )q(δYe ). Afterward, with Proposition 1 and Eqs. (5) and (6)
+we can draw the following conclusions. The proofs can be found in Appendix B.
+Lemma 1. ∀ε > 0, there exists a probabilistic model fϕ,θ := (pϕ , pθ ) to guarantee that
+          (t)        (t)                (t)
+DKL (q(Yer )||pθ (Ybr )) < ε, where Ybr = fϕ,θ (X (t) ).
+Lemma 2. With the coupled diffusion process, the difference between diffusion noise and generation
+                                            (t)        (t)
+noise will be reduced, i.e., limt→∞ DKL (q(δYe )||pθ (δYb |Z (t) )) < DKL (q(ϵY )||pθ (ϵYb )) .
+
+Therefore, the uncertainty raised by the generative model and the inherent data noise can be reduced
+through the coupled diffusion process. In addition, the diffusion process augments the input series, as
+well as the target series, simultaneously, which can improve the generalization capability for (esp.
+short) time series forecasting.
+
+2.2.2    Bidirectional Variational Auto-Encoder
+Traditionally, in the diffusion model, a reverse process is adopted to generate high-quality samples [85,
+41]. However, for the generative time series forecasting problem, not only the expressiveness but
+also the supervision of the ground truths should be considered. In this work, we employ a more
+efficient generative model, i.e., bidirectional variational auto-encoder (BVAE) [89], to take the place
+of the reverse process of the diffusion model. The architecture of BVAE is described in Fig. 1
+where Z is treated in a multivariate fashion Z = {z1 , · · · , zn } (zi ∈ Rm , zi = [zi,1 , · · · , zi,m ]) and
+zi+1 ∼ p(zi+1 |zi , X). Then, n is determined in accordance with the number of residual blocks in
+the encoder, as well as the decoder. Another merit of BVAE is that it opens an interface to integrate
+the disentanglement for improving model interpretability (refer to Section 2.4).
+
+2.3     Scaled Denoising Score Matching for Diffused Time Series Cleaning
+
+Although the time series data can be augmented with the aforementioned coupled diffusion proba-
+bilistic model, the generative distribution pθ (Yb (t) ) tends to move toward the diffused target series
+Y (t) which has been corrupted [65, 87]. To further “clean” the generated target series, we employ the
+Denoising Score Matching (DSM) to accelerate the de-uncertainty process without sacrificing the
+
+
+                                                        4
+model flexibility. DSM [90, 65] was proposed to link Denoising Auto-Encoder (DAE) [91] to Score
+Matching (SM) [43]. Let Yb denote the generated target series, then we have the objective
+
+                    LDSM (ζ) = Epσ          b ,Y ) ∥∇Y
+                                           (Y        b       log(qσ0 (Yb |Y )) + ∇Yb E(Yb ; ζ)∥2 ,           (7)
+                                       0
+
+
+where pσ0 (Yb , Y ) is the joint density of pairs of corrupted and clean samples (Yb , Y ),
+∇Yb log(qσ0 (Yb |Y )) is the derivative of log density of the single noise kernel which is dedicated
+                                                            R
+to replacing the Parzen density estimator: pσ0 (Yb ) = qσ0 (Yb |Y )p(Y )dY in score matching,
+and E(Yb ; ζ) is the energy function. In the particular case of Gaussian noise, log(qσ0 (Yb |Y )) =
+−(Yb − Y )2 /2σ0 2 + C. Thus, we have
+
+                          LDSM (ζ) = Epσ               b ,Y ) ∥Y
+                                                      (Y           − Yb + σ02 ∇Yb E(Yb ; ζ)∥2 .              (8)
+                                                  0
+
+
+Then, for the diffused target series at step t, we can obtain
+
+                   LDSM (ζ, t) = Epσ            b (t) ,Y ) ∥Y
+                                               (Y               − Yb (t) + σ02 ∇Yb (t) E(Yb (t) ; ζ)∥2 .     (9)
+                                           0
+
+
+To scale the noise of different levels [65], a monotonically decreasing series of fixed σ values
+{σ1 , · · · , σT | σt = 1 − ᾱt } (refer to the aforementioned variance schedule β in Section 2.2) is
+adopted. Therefore, the objective of the multi-scaled DSM is
+
+                 L(ζ, t) = Eqσ (Yb (t) |Y )p(Y ) l(σt )∥Y − Yb (t) + σ02 ∇Yb (t) E(Yb (t) ; ζ)∥2 ,          (10)
+
+where σ ∈ {σ1 , · · · , σT } and l(σt ) = σt . With Eq. (10), we can ensure that the gradient has the right
+magnitude by setting σ0 .
+Note that, in the generative time series forecasting setting, the generated samples will be tested
+without applying the diffusion process. To further denoise the generated target series Yb , we apply a
+single-step gradient denoising jump [78]:
+
+                                       Ybclean = Yb − σ02 ∇Yb E(Yb ; ζ) .                                   (11)
+The generated results tend to possess larger distribution space than the true target, and the noisy term
+in Eq. (11) approximates the noise between the generated target series and the “cleaned” target series.
+Therefore, σ02 ∇Yb E(Yb ; ζ) can be treated as the estimated uncertainty of the prediction.
+
+2.4   Disentangling Latent Variables for Interpretation
+
+The interpretability of the time series forecasting model is of great importance for many downstream
+tasks [88, 38, 44]. Through disentangling the latent variables of the generative model, not only the
+interpretability but also the reliability of the prediction can be further enhanced [64].
+To disentangle the latent variables Z = {z1 , · · · , zn }, we attempt to minimize the Total Correlation
+(TC) [94, 50], which is a popular metric to measure dependencies among multiple random variables,
+                                                                                         m
+                                                                                         Y
+                     TC(zi ) = DKL (pϕ (zi )||p̄ϕ (zi )),                  p̄ϕ (zi ) =         pϕ (zi,j )   (12)
+                                                                                         j=1
+
+where m denotes the number of factors of zi that need to be disentangled. In general, lower TC means
+better disentanglement if the latent variables preserve useful information. However, a very low TC
+can still be obtained when the latent variables carry no meaningful signals. Through the bidirectional
+structure of BVAE, such issues can be tackled without too much effort. As shown in Fig. 1, the
+signals are disseminated in both the encoder and decoder, such that rich semantics are aggregated
+into the latent variables. Furthermore, to alleviate the effect of potential irregular values, we average
+the total correlations of z1:n , then the loss w.r.t. the TC score of BVAE can be obtained:
+                                                                   n
+                                                           1X
+                                                 LTC     =       TC(zi ) .                                  (13)
+                                                           n i=1
+
+
+                                                                   5
+             Algorithm 1 Training Procedure.
+              1: repeat
+              2:   X (0) ∼ q(X (0) ), Y (0) ∼ q(Y (0) ), δX ∼ N (0, Id ), δY ∼ N (0, Id )
+              3:   Randomly choose t ∈ {1, · · · , T } and with Eqs.p(4) and (6),
+                              √
+              4:      X (t) = ᾱt X (0) + (1 − ᾱt )δX , Y (t) = ᾱt′ Y (0) + (1 − ᾱt′ )δY
+              5:   Generate the latent variable Z with BVAE, Z ∼ pϕ (Z|X (t) )
+              6:   Sample Yb (t) ∼ pθ (Yb (t) |Z) and calculate DKL (q(Y (t) )||pθ (Yb (t) ))
+              7:   Calculate DSM loss with Eq. (10)
+              8:   Calculate total correlation of Z with Eq. (13)
+              9:   Construct the total loss L with Eq. (14)
+             10:   θ, ϕ ← argmin(L)
+             11: until Convergence
+
+                     Algorithm 2 Forecasting Procedure.
+                      1:   Input: X ∼ q(X)
+                      2:   Sample Z ∼ pϕ (Z|X)
+                      3:   Generate Yb ∼ pθ (Yb |Z)
+                      4:   Output: Ybclean and the estimated uncertainty with Eq. (11)
+
+
+2.5       Training and Forecasting
+
+Training Objective. To reduce the effect of uncertainty, the coupled diffusion equipped with the
+denoising network is proposed without sacrificing too much generalizability. Then we disentangle
+the latent variables of the generative model by minimizing the TC of the latent variables. Finally, we
+reconstruct the loss with several trade-off parameters, and with Eqs. (10), (11) and (13) we have
+              L = ψ · DKL (q(Y (t) )||pθ (Yb (t) )) + λ · L(ζ, t) + γ · LTC + Lmse (Yb (t) , Y (t) ) ,   (14)
+where Lmse calculates the mean square error (MSE) between Yb (t) and Y (t) . We minimize the above
+objective to learn the generative model accordingly.
+Algorithms. Algorithm 1 displays the complete training procedure of D3 VAE with the loss function
+in Eq. (14). For inference, as described in Algorithm 2, given the input series X, the target series can
+be generated directly from the distribution pθ which is conditioned on the latent states drawn from
+distribution pϕ .
+
+3         Experiments
+3.1       Experiment Settings
+
+Datasets. We generate two synthetic datasets suggested by [23],
+                        wt = a · wt−1 + tanh(b · wt−2 ) + sin(wt−3 ) + N (0, 0.5I)
+                                 X = [w1 , w2 , ..., wN ] · F + N (0, 0.5I) ,
+where wt ∈ R2 and 0 ≤ wt,1 , wt,2 ≤ 1 (t = 1, 2, 3), F ∈ R2×k ∼ U[−1, 1], k denotes the
+dimensionality and N is the number of time points, a, b are two constants. We set a = 0.9, b =
+0.2, k = 20 to generate D1 , and a = 0.5, b = 0.5, k = 40 for D2 , and N = 800 for both D1 and D2 .
+Six real-world datasets with diverse spatiotemporal dynamics are selected, including Traffic [58],
+Electricity2 , Weather3 , Wind (Wind Power) 4 , and ETTs [106] (ETTm1 and ETTh1). To highlight
+the uncertainty in short time series scenarios, for each dataset, we slice a subset from the starting
+point to make sure that each sliced dataset contains at most 1000 time points. Subsequently, we
+      2
+     https://archive.ics.uci.edu/ml/datasets/ElectricityLoadDiagrams20112014
+      3
+     https://www.bgc-jena.mpg.de/wetter/
+   4
+     This dataset is published at https://github.com/PaddlePaddle/PaddleSpatial/tree/main/
+paddlespatial/datasets/WindPower.
+
+
+                                                         6
+Table 1: Performance comparisons on synthetic data in terms of MSE and CRPS. The best results are
+boldfaced.
+Model              D3 VAE        NVAE       β-TCVAE        f-VAE       DeepAR       TimeGrad GP-copula           VAE
+                  0.512±.033   1.201±.027   0.631±.003   0.854±.099   1.153±.125    0.966±.102   1.202±.108   0.912±.132
+               8
+                  0.585±.021   0.905±.011   0.658±.002   0.745±.036   0.758±.038    0.698±.024   0.773±.033   0.786±.053
+D1
+                  0.571±.025   1.184±.025   0.758±.047   1.046±.270   0.911±.046    0.945±.315   0.915±.059   0.908±.177
+               16
+                  0.625±.013   0.897±.012   0.747±.027   0.835±.108   0.699±.014    0.709±.100   0.704±.020   0.765±.067
+                  0.599±.049   1.966±.047   3.096±.197   3.353±.430   0.977±.137    0.963±.385   1.037±.082   3.079±.345
+               8
+                  0.628±.027   1.255±.021   1.680±.062   1.640±.154   0.727±.058    0.706±.123   0.753±.026   1.504±.098
+D2
+                  0.786±.041   1.955±.051   3.067±.443   3.109±.428   0.972±.144    0.850±.061   1.082±.071   3.132±.160
+               16
+                  0.728±.026   1.251±.020   1.643±.183   1.558±.157   0.720±.050    0.649±.017   0.762±.008   1.560±.060
+
+
+Table 2: The performance comparisons on real-world datasets in terms of MSE and CRPS, and the
+best results are in boldface.
+ Model              D3 VAE       NVAE       β-TCVAE        f-VAE       DeepAR       TimeGrad GP-copula          VAE
+                  0.081±.003   1.300±.024   1.003±.006   0.982±.059   3.895±.306    3.695±.246   4.299±.372   0.794±.130
+               8
+  Traffic
+
+
+
+
+                  0.207±.003   0.593±.004   0.894±.003   0.666±.032   1.391±.071    1.410±.027   1.408±.046   0.759±.07
+                  0.081±.009   1.271±.019   0.997±.004   0.998±.042   4.141±.320    3.495±.362   4.575±.141   0.632±.057
+               16
+                  0.200±.014   0.589±.001   0.893±.002   0.692±.026   1.338±.043    1.329±.057   1.506±.025   0.671±.038
+                  0.251±.015   1.134±.029   0.901±.052   0.893±.069   2.934±.173    2.703±.087   2.924±.218   0.853±.040
+ Electricity
+
+
+
+
+               8
+                  0.398±.011   0.542±.003   0.831±.004   0.809±.024   1.244±.037    1.208±.024   1.249±.048   0.795±.016
+                  0.308±.030   1.150±.032   0.850±.003   0.807±.034   2.803±.199    2.770±.237   3.065±.186   0.846±.062
+               16
+                  0.437±.020   0.531±.003   0.814±.002   0.782±.024   1.220±.048    1.240±.048   1.307±.042   0.793±.029
+                  0.169±.022   0.801±.024   0.234±.042   0.591±.198   2.317±.357    2.715±.189   2.412±.761   0.560±.192
+  Weather
+
+
+
+
+               8
+                  0.357±.024   0.757±.013   0.404±.040   0.565±.080   0.858±.078    0.920±.013   0.897±.115   0.572±.077
+                  0.187±.047   0.811±.016   0.212±.012   0.530±.167   1.269±.187    1.110±.083   1.357±.145   0.424±.141
+               16
+                  0.361±.046   0.759±.009   0.388±.014   0.547±.067   0.783±.059    0.733±.016   0.811±.032   0.503±.068
+                  0.527±.073   0.921±.026   1.538±.254   2.326±.445   2.204±.420    1.877±.245   2.024±.143   2.375±.405
+               8
+  ETTm1
+
+
+
+
+                  0.5570.048   0.760±.026   1.015±.112   1.260±.167   0.984±.074    0.908±.038   0.961±.027   1.258±.104
+                  0.968±.104   1.100±.032   1.744±.100   2.339±.270   2.350±.170    2.032±.234   2.486±.207   2.321±.469
+               16
+                  0.821±.072   0.822±.026   1.104±.041   1.249±.088   0.974±.016    0.919±.031   0.984±.016   1.259±.132
+                  0.292±.036   0.483±.017   0.703±.054   0.870±.134   3.451±.335    4.259±1.13   4.278±1.12   1.006±.281
+               8
+  ETTh1
+
+
+
+
+                  0.424±.033   0.461±.011   0.644±.038   0.730±.060   1.194±.034    1.092±.028   1.169±.055   0.762±.115
+                  0.374±.061   0.488±.010   0.681±.018   0.983±.139   1.929±.105    1.332±.125   1.701±.088   0.681±.104
+               16
+                  0.488±.039   0.463±.018   0.640±.008   0.760±.062   1.029±.030    0.879±.037   0.999±.023   0.641±.055
+                  0.681±.075   1.854±.032   1.321±.379   1.942±.101   12.53±2.25    12.67±1.75   11.35±6.61   2.006±.145
+               8
+  Wind
+
+
+
+
+                  0.596±.052   1.223±.014   0.863±.143   1.067±.086   1.370±.107    1.440±.059   1.305±.369   1.103±.100
+                  1.033±.062   1.955±.015   0.894±.038   1.262±.178   13.96±.1.53   12.86±2.60   13.79±5.37   1.138±.205
+               16
+                  0.757±.053   1.247±.011   0.785±.037   0.843±.066   1.347±.060    1.240±.070   1.261±.171   0.862±.092
+
+
+obtained 5%-Traffic, 3%-Electricity, 2%-Weather, 2%-Wind, 1%-ETTm1, and 5%-ETTh1. The
+statistical descriptions of the real-world datasets can be found in Appendix C.1. All datasets are split
+chronologically and adopt the same train/validation/test ratios, i.e. 7:1:2.
+Baselines. We compare D3 VAE with one GP (Gaussian Process) based method (GP-copula [76]),
+two auto-regressive methods (DeepAR [77] and TimeGrad [74]), and four VAE-based methods, i.e.,
+vanilla VAE, NVAE [89], factor-VAE (f-VAE for short) [50] and β-TCVAE [15].
+Implementation Details. An input-lx -predict-ly window is applied to roll the train, validation, and
+test sets with stride one time step, respectively, and this setting is adopted for all datasets. Hereinafter,
+the last dimension of the multivariate time series is selected as the target variable by default.
+
+
+                                                                7
+We use the Adam optimizer with an initial learning rate of 5e − 4. The batch size is 16 and the
+training is set to 20 epochs at most equipped with early stopping. The number of disentanglement
+factors is chosen from {4, 8}, and βt ∈ β is set to range from 0.01 to 0.1 with different diffusion
+steps T ∈ [100, 1000], then ω is set to 0.1. The trade-off hyperparameters are set as ψ = 0.05, λ =
+0.1, γ = 0.001 for ETTs, and ψ = 0.5, λ = 1.0, γ = 0.01 for others. All the experiments were
+carried out on a Linux machine with a single NVIDIA P40 GPU. The experiments are repeated 5
+times and the average and variance of the predictions are reported. We use the Continuous Ranked
+Probability Score (CRPS) [68] and Mean Squared Error (MSE) as the evaluation metrics. For both
+metrics, the lower the better. In particular, CRPS is used to evaluate the similarity of two distributions
+and is equivalent to Mean Absolute Error (MAE) when two distributions are discrete.
+
+3.2   Main Results
+
+Two different prediction lengths, i.e., ly ∈ {8, 16} (lx = ly ), are evaluated. The results of longer
+prediction lengths are available in Appendix D.
+Toy Datasets. In Table 1, we can observe that D3 VAE achieves SOTA performance most of the
+time, and achieves competitive CRPS in D2 for prediction length 16. Besides, VAEs outperform
+VARs and GP on D1 , but VARs achieve better performance on D2 , which demonstrates the advantage
+of VARs in learning complex temporal dependencies.
+Real-World Datasets. As for the experiments on real-world data, D3 VAE achieves consistent SOTA
+performance except for the prediction length 16 on the Wind dataset (Table 2). Particularly, under
+the input-8-predict-8 setting, D3 VAE can provide remarkable improvements in Traffic, Electricity,
+Wind, ETTm1, ETTh1 and Weather w.r.t. MSE reduction (90%, 71%, 48%, 43%, 40% and 28%).
+Regarding the CRPS reduction, D3 VAE achieves a 73% reduction in Traffic, 31% in Wind, and 27%
+in Electricity under the input-8-predict-8 setting, and a 70% reduction in Traffic, 18% in Electricity,
+and 7% in Weather under the input-16-predict-16 setting. Overall, D3 VAE gains the averaged 43%
+MSE reduction and 23% CRPS reduction among the above settings. More results under longer
+prediction-length settings and on full datasets can be found in Appendix D.1.
+Uncertainty Estimation. The uncertainty can be assessed by estimating the noise of the outcome
+series when doing the prediction (see Section 2.3). Through scale parameter ω, the generated distri-
+bution space can be adjusted accordingly (results on the effect of ω can be found in Appendix D.3).
+The showcases in Fig. 3 demonstrate the uncertainty estimation of the yielded series in the Traffic
+dataset, where the last six dimensions are treated as target variables. We can find that noise estimation
+can quantify the uncertainty effectively. For example, the estimated uncertainty grows rapidly when
+extreme values are encountered.
+
+
+
+
+Figure 3: Uncertainty estimation of the prediction of the last six dimensions in the Traffic dataset,
+and the colored envelope denotes the estimated uncertainty.
+
+
+                                                    8
+Table 3: Ablation study of the coupled diffusion probabilistic
+model w.r.t. MSE and CSPR.
+                                   Traffic             Electricity
+            Dataset
+                              16             32      16           32
+                          0.122±.006 0.126±.013 0.350±.043 0.422±.012
+          D3 VAE−Ye
+                          0.250±.008 0.261±.017 0.480±.032 0.551±.012
+                          0.096±.006 0.092±.008 0.331±.023 0.502±.079
+    D3 VAE−Ye −DSM
+                          0.217±.010 0.220±.013 0.450±.021 0.584±.053
+                          0.123±.003 0.117±.007 0.351±.047 0.420±.056
+          D3 VAE−Xe
+                          0.256±.006 0.253±.013 0.481±.036 0.540±.046
+                          0.123±.004 0.118±.008 0.365±.025 0.439±.014
+      D3 VAE−CDM
+                          0.255±.007 0.252±.015 0.498±.018 0.561±.016
+                          0.123±.003 0.119±.003 0.338±.041 0.448±.062
+D3 VAE−CDM−DSM
+                          0.255±.003 0.253±.005 0.467±.029 0.555±.041
+                                                                        Figure 4: Comparisons of predic-
+                          0.081±.009 0.091±.007 0.308±.030 0.410±.075   tions with different βT and varying
+            D3 VAE
+                          0.200±.014 0.216±.012 0.437±.020 0.534±.058   T on the Electricity dataset.
+
+Disentanglement Evaluation. For time series forecasting, it is difficult to label disentangled factors
+by hand, thus we take different dimensions of Z as the factors to be disentangled: zi = [zi,1 , · · · , zi,m ]
+(zi ∈ Z). We build a classifier to discriminate whether an instance zi,j belongs to class j such that
+the disentanglement quality can be assessed by evaluating the classification performance. Besides,
+we adopt the Mutual Information Gap (MIG) [15] as a metric to evaluate the disentanglement in a
+more straightforward way. Due to the space limit, the evaluation of disentanglement with different
+factors can be found in Appendix E.
+
+3.3        Model Analysis
+
+Ablation Study of the Coupled Diffusion and Denoising Network. To evaluate the effectiveness of
+the coupled diffusion model (CDM), we compare the full versioned D3 VAE with its three variants:
+i) D3 VAE−Ye , i.e. D3 VAE without diffused Y , ii) D3 VAE−Xe , i.e. D3 VAE without diffused X, and
+iii) D3 VAE−CDM , i.e. D3 VAE without any diffusion. Besides, the performance of D3 VAE without
+denoising score matching (DSM) is also reported when the target series is not diffused, which are
+denoted as D3 VAE−Ye −DSM and D3 VAE−CDM−DSM . The ablation study is carried out on Traffic
+and Electricity datasets under the settings of input-16-predict-16 and input-32-predict-32. In Table 3,
+we can find that the diffusion process is effective in augmenting the input or the target. Moreover,
+when the target is not diffused, the denoising network would be deficient since the noise level of the
+target cannot be estimated by then.
+Variance Schedule β and The Number of Diffusion Steps T . To reduce the effect of the uncertainty
+while preserving the informative temporal patterns, the extent of the diffusion should be configured
+properly. Too small a variance schedule or inadequate diffusion steps will lead to a meaningless
+diffusion process. Otherwise, the diffusion could be out of control 5 . Here we analyze the effect of
+the variance schedule β and the number of diffusion steps T . We set β1 = 0 and change the value of
+βt in the range of [0.01, 0.1], and T ranges from 100 to 4000. As shown in Fig. 4, we can see that the
+prediction performance can be improved if proper β and T are employed.
+
+
+4         Discussion
+
+Sampling for Generative Time Series Forecasting.
+The Langevin dynamics has been widely applied to the sampling of energy-based mod-
+els (EBMs) [21],
+                                     ρ               1
+                       Yk = Yk−1 − ∇Y Eϕ (Yk−1 ) + ρ 2 N (0, Id ) ,           (15)
+                                     2
+      5
+          An illustrative showcase can be found in Appendix F.
+
+
+                                                          9
+where k ∈ {0, · · · , K}, K denotes the number of sampling steps, and ρ is a constant. With K and ρ
+being properly configured, samples with high quality can be generated. The Langevin dynamics has
+been successfully applied to image reconstruction and natural language processing [56, 20].
+In this work, we employ a single-step gradient denoising jump to generate the target series. The
+experiments that were carried out demonstrate the effectiveness of such single-step sampling. To
+investigate whether it is worth taking more sampling steps for further performance improvement of
+time series forecasting, we conduct an extra empirical study. We showcase the prediction results
+under different sampling strategies in Fig. 5. By omitting the additive noise in Langevin dynamics, we
+employ the multi-step denoising for D3 VAE to generate the target series and plot the generated results
+in Fig. 5a. Then, with the standard Langevin dynamics, we can implement a generative procedure
+instead of denoising and compare the generated target series with different ρ (see Figs. 5b to 5d). We
+can observe that, more sampling steps might not be helpful in improving prediction performance
+for generative time series forecasting (Fig. 5a). Besides, larger sampling steps would lead to high
+computational complexity. On the other hand, different configurations of Langevin dynamics (with
+varying ρ) cannot bring indispensable benefits for time series forecasting (Figs. 5b to 5d).
+
+
+
+
+    (a) Multi-step denoising.    (b) ρ = 0.003.           (c) ρ = 0.005.           (d) ρ = 0.007.
+    Figure 5: The prediction showcases in the Electricity dataset with different sampling strategies.
+
+Limitations.
+With the coupled diffusion probabilistic model, the aleatoric uncertainty of time series can be reduced
+though, new bias is brought into the series to mimic the distribution of the input and target. However,
+as a common issue in VAEs that any introduced bias in the input will result in bias in the generated
+output [92], the diffusion steps and variance schedule need to be chosen cautiously, such that this
+model can be applied to different time series tasks smoothly. The proposed model is devised for
+general time series forecasting, it should be used properly to avoid the potential negative societal
+impacts, such as any kind of illegal applications.
+In time series predictive analysis, disentanglement of the latent variables has been of great importance
+for interpreting the prediction to provide more reliance. Due to the lack of prior knowledge of the
+entangled factors in generative time series forecasting, only unsupervised disentanglement learning
+can be done, which has been proven theoretically feasible for time series [64]. Despite this, for
+boarder applications of disentanglement and better performance, it is still worth exploring the ways
+of labeling the factors of time series in the future. Moreover, because of the uniqueness of time series
+data, it is also a promising direction to explore more generative and sampling methods for the time
+series generation task.
+
+5      Conclusion
+In this work, we propose a generative model with the bidirectional VAE as the backbone. To further
+improve the generalizability, we devise a coupled diffusion probabilistic model for time series
+forecasting. Then a scaled denoising network is developed to guarantee the prediction accuracy.
+Afterward, the latent variables are further disentangled for better model interpretability. Extensive
+experiments on synthetic data and real-world data validate that our proposed generative model
+achieves SOTA performance compared to existing competitive generative models.
+
+Acknowledgement
+We thank Longyuan Power Group Corp. Ltd. for supporting this work.
+
+
+                                                   10
+References
+ [1] Moloud Abdar, Farhad Pourpanah, Sadiq Hussain, Dana Rezazadegan, Li Liu, Mohammad
+     Ghavamzadeh, Paul Fieguth, Xiaochun Cao, Abbas Khosravi, U Rajendra Acharya, et al. A
+     review of uncertainty quantification in deep learning: Techniques, applications and challenges.
+     Information Fusion, 76:243–297, 2021.
+ [2] Marco Ancona, Enea Ceolini, Cengiz Öztireli, and Markus Gross. Towards better under-
+     standing of gradient-based attribution methods for deep neural networks. In International
+     Conference on Learning Representations, 2018.
+ [3] Adebiyi A Ariyo, Adewumi O Adewumi, and Charles K Ayo. Stock price prediction using the
+     ARIMA model. In UKSim-AMSS 16th International Conference on Computer Modelling and
+     Simulation, pages 106–112. IEEE, 2014.
+ [4] Shaojie Bai, J Zico Kolter, and Vladlen Koltun. An empirical evaluation of generic convo-
+     lutional and recurrent networks for sequence modeling. arXiv preprint arXiv:1803.01271,
+     2018.
+ [5] Mauricio Barahona and Chi-Sang Poon. Detection of nonlinear dynamics in short, noisy time
+     series. Nature, 381(6579):215–217, 1996.
+ [6] Yoshua Bengio, Aaron Courville, and Pascal Vincent. Representation learning: A review
+     and new perspectives. IEEE Transactions on Pattern Analysis and Machine Intelligence,
+     35(8):1798–1828, 2013.
+ [7] Mikolaj Binkowski, Gautier Marti, and Philippe Donnat. Autoregressive convolutional neural
+     networks for asynchronous time series. In International Conference on Machine Learning,
+     pages 580–589. PMLR, 2018.
+ [8] Anastasia Borovykh, Sander Bohte, and Cornelis W Oosterlee. Conditional time series
+     forecasting with convolutional neural networks. STAT, 1050:16, 2017.
+ [9] George EP Box and Gwilym M Jenkins. Some recent advances in forecasting and control.
+     Journal of the Royal Statistical Society. Series C (Applied Statistics), 17(2):91–109, 1968.
+[10] Sofiane Brahim-Belhouari and Amine Bermak. Gaussian process for nonstationary time series
+     prediction. Computational Statistics & Data Analysis, 47(4):705–712, 2004.
+[11] Defu Cao, Yujing Wang, Juanyong Duan, Ce Zhang, Xia Zhu, Congrui Huang, Yunhai Tong,
+     Bixiong Xu, Jing Bai, Jie Tong, et al. Spectral temporal graph neural network for multivariate
+     time-series forecasting. Advances in Neural Information Processing Systems, 33:17766–17778,
+     2020.
+[12] Li-Juan Cao and Francis Eng Hock Tay. Support vector machine with adaptive parameters in
+     financial time series forecasting. IEEE Transactions on Neural Networks, 14(6):1506–1518,
+     2003.
+[13] Shiyu Chang, Yang Zhang, Wei Han, Mo Yu, Xiaoxiao Guo, Wei Tan, Xiaodong Cui, Michael
+     Witbrock, Mark A Hasegawa-Johnson, and Thomas S Huang. Dilated recurrent neural
+     networks. Advances in Neural Information Processing Systems, 30, 2017.
+[14] Sotirios P Chatzis. Recurrent latent variable conditional heteroscedasticity. In IEEE Inter-
+     national Conference on Acoustics, Speech and Signal Processing, pages 2711–2715. IEEE,
+     2017.
+[15] Ricky TQ Chen, Xuechen Li, Roger B Grosse, and David K Duvenaud. Isolating sources
+     of disentanglement in variational autoencoders. Advances in Neural Information Processing
+     Systems, 31, 2018.
+[16] Junyoung Chung, Kyle Kastner, Laurent Dinh, Kratarth Goel, Aaron C Courville, and Yoshua
+     Bengio. A recurrent latent variable model for sequential data. Advances in Neural Information
+     Processing Systems, 28, 2015.
+
+
+                                               11
+[17] Hoang Anh Dau, Anthony Bagnall, Kaveh Kamgar, Chin-Chia Michael Yeh, Yan Zhu,
+     Shaghayegh Gharghabi, Chotirat Ann Ratanamahatana, and Eamonn Keogh. The UCR
+     time series archive. IEEE/CAA Journal of Automatica Sinica, 6(6):1293–1305, 2019.
+[18] Emmanuel de Bézenac, Syama Sundar Rangapuram, Konstantinos Benidis, Michael Bohlke-
+     Schneider, Richard Kurle, Lorenzo Stella, Hilaf Hasson, Patrick Gallinari, and Tim
+     Januschowski. Normalizing kalman filters for multivariate time series analysis. Advances in
+     Neural Information Processing Systems, 33:2995–3007, 2020.
+[19] Ankur Debnath, Govind Waghmare, Hardik Wadhwa, Siddhartha Asthana, and Ankur Arora.
+     Exploring generative data augmentation in multivariate time series forecasting: Opportunities
+     and challenges. Solar-Energy, 137:52–560, 2021.
+[20] Yuntian Deng, Anton Bakhtin, Myle Ott, Arthur Szlam, and Marc’Aurelio Ranzato. Residual
+     energy-based models for text generation. In International Conference on Learning Represen-
+     tations, 2019.
+[21] Yilun Du and Igor Mordatch. Implicit generation and modeling with energy based models.
+     Advances in Neural Information Processing Systems, 32, 2019.
+[22] Stephen Ellner and Peter Turchin. Chaos in a noisy world: New methods and evidence from
+     time-series analysis. The American Naturalist, 145(3):343–375, 1995.
+[23] Amirreza Farnoosh, Bahar Azari, and Sarah Ostadabbas. Deep switching auto-regressive
+     factorization: Application to time series forecasting. arXiv preprint arXiv:2009.05135, 2020.
+[24] Konstantinos Fokianos, Anders Rahbek, and Dag Tjøstheim. Poisson autoregression. Journal
+     of the American Statistical Association, 104(488):1430–1439, 2009.
+[25] Germain Forestier, François Petitjean, Hoang Anh Dau, Geoffrey I Webb, and Eamonn Keogh.
+     Generating synthetic time series to augment sparse datasets. In IEEE International Conference
+     on Data Mining, pages 865–870. IEEE, 2017.
+[26] Vincent Fortuin, Dmitry Baranchuk, Gunnar Rätsch, and Stephan Mandt. GP-VAE: Deep
+     probabilistic time series imputation. In International Conference on Artificial Intelligence and
+     Statistics, pages 1651–1661. PMLR, 2020.
+[27] Vincent Fortuin, Matthias Hüser, Francesco Locatello, Heiko Strathmann, and Gunnar Rätsch.
+     SOM-VAE: Interpretable discrete representation learning on time series. In International
+     Conference on Learning Representations, 2019.
+[28] WR Foster, F Collopy, and LH Ungar. Neural network forecasting of short, noisy time series.
+     Computers & Chemical Engineering, 16(4):293–297, 1992.
+[29] Marco Fraccaro, Simon Kamronn, Ulrich Paquet, and Ole Winther. A disentangled recognition
+     and nonlinear dynamics model for unsupervised learning. Advances in Neural Information
+     Processing Systems, 30, 2017.
+[30] John Cristian Borges Gamboa. Deep learning for time-series analysis. arXiv preprint
+     arXiv:1701.01887, 2017.
+[31] Jakob Gawlikowski, Cedrique Rovile Njieutcheu Tassi, Mohsin Ali, Jongseok Lee, Matthias
+     Humt, Jianxiang Feng, Anna Kruspe, Rudolph Triebel, Peter Jung, Ribana Roscher, et al. A
+     survey of uncertainty in deep neural networks. arXiv preprint arXiv:2107.03342, 2021.
+[32] Felix A Gers, Nicol N Schraudolph, and Jürgen Schmidhuber. Learning precise timing with
+     LSTM recurrent networks. Journal of Machine Learning Research, 3(Aug):115–143, 2002.
+[33] C Lee Giles, Steve Lawrence, and Ah Chung Tsoi. Noisy time series prediction using recurrent
+     neural networks and grammatical inference. Machine Learning, 44(1):161–183, 2001.
+[34] Laurent Girin, Simon Leglaive, Xiaoyu Bie, Julien Diard, Thomas Hueber, and Xavier
+     Alameda-Pineda. Dynamical variational autoencoders: A comprehensive review. arXiv
+     preprint arXiv:2008.12595, 2020.
+
+
+                                                12
+[35] Klaus Greff, Rupesh K Srivastava, Jan Koutník, Bas R Steunebrink, and Jürgen Schmidhuber.
+     LSTM: A search space odyssey. IEEE Transactions on Neural Networks and Learning Systems,
+     28(10):2222–2232, 2016.
+[36] Vinayaka Gude, Steven Corns, and Suzanna Long. Flood prediction and uncertainty estimation
+     using deep learning. Water, 12(3):884, 2020.
+[37] Shengnan Guo, Youfang Lin, Ning Feng, Chao Song, and Huaiyu Wan. Attention based
+     spatial-temporal graph convolutional networks for traffic flow forecasting. In AAAI Conference
+     on Artificial Intelligence, volume 33, pages 922–929, 2019.
+[38] Michaela Hardt, Alvin Rajkomar, Gerardo Flores, Andrew Dai, Michael Howell, Greg Corrado,
+     Claire Cui, and Moritz Hardt. Explaining an increase in predicted risk for clinical alerts. In
+     ACM Conference on Health, Inference, and Learning, pages 80–89, 2020.
+[39] Irina Higgins, Loic Matthey, Arka Pal, Christopher Burgess, Xavier Glorot, Matthew Botvinick,
+     Shakir Mohamed, and Alexander Lerchner. beta-VAE: Learning basic visual concepts with a
+     constrained variational framework. 2016.
+[40] Steven Craig Hillmer and George C Tiao. An ARIMA-model-based approach to seasonal
+     adjustment. Journal of the American Statistical Association, 77(377):63–70, 1982.
+[41] Jonathan Ho, Ajay Jain, and Pieter Abbeel. Denoising diffusion probabilistic models. Advances
+     in Neural Information Processing Systems, 33:6840–6851, 2020.
+[42] Siu Lau Ho and Min Xie. The use of ARIMA models for reliability forecasting and analysis.
+     Computers & Industrial Engineering, 35(1-2):213–216, 1998.
+[43] Aapo Hyvärinen, Jarmo Hurri, and Patrik O Hoyer. Estimation of non-normalized statistical
+     models. In Natural Image Statistics, pages 419–426. Springer, 2009.
+[44] Aya Abdelsalam Ismail, Mohamed Gunady, Hector Corrada Bravo, and Soheil Feizi. Bench-
+     marking deep learning interpretability in time series predictions. Advances in Neural Informa-
+     tion Processing Systems, 33:6441–6452, 2020.
+[45] Aya Abdelsalam Ismail, Mohamed Gunady, Luiz Pessoa, Hector Corrada Bravo, and Soheil
+     Feizi. Input-cell attention reduces vanishing saliency of recurrent neural networks. Advances
+     in Neural Information Processing Systems, 32, 2019.
+[46] Hassan Ismail Fawaz, Germain Forestier, Jonathan Weber, Lhassane Idoumghar, and Pierre-
+     Alain Muller. Deep learning for time series classification: a review. Data Mining and
+     Knowledge Discovery, 33(4):917–963, 2019.
+[47] Dulakshi SK Karunasinghe and Shie-Yui Liong. Chaotic time series prediction with a global
+     model: Artificial neural network. Journal of Hydrology, 323(1-4):92–105, 2006.
+[48] Alex Kendall and Yarin Gal. What uncertainties do we need in bayesian deep learning for
+     computer vision? Advances in Neural Information Processing Systems, 30, 2017.
+[49] Been Kim, Martin Wattenberg, Justin Gilmer, Carrie Cai, James Wexler, Fernanda Viegas,
+     et al. Interpretability beyond feature attribution: Quantitative testing with concept activation
+     vectors (TCAV). In International Conference on Machine Learning, pages 2668–2677. PMLR,
+     2018.
+[50] Hyunjik Kim and Andriy Mnih. Disentangling by factorising. In International Conference on
+     Machine Learning, pages 2649–2658. PMLR, 2018.
+[51] Kyoung-jae Kim. Financial time series forecasting using support vector machines. Neurocom-
+     puting, 55(1-2):307–319, 2003.
+[52] Pieter-Jan Kindermans, Sara Hooker, Julius Adebayo, Maximilian Alber, Kristof T Schütt,
+     Sven Dähne, Dumitru Erhan, and Been Kim. The (un) reliability of saliency methods. In
+     Explainable AI: Interpreting, Explaining and Visualizing Deep Learning, pages 267–280.
+     Springer, 2019.
+
+
+                                                13
+[53] Diederik P Kingma and Max Welling. Auto-encoding variational bayes. arXiv preprint
+     arXiv:1312.6114, 2013.
+[54] Durk P Kingma, Tim Salimans, Rafal Jozefowicz, Xi Chen, Ilya Sutskever, and Max Welling.
+     Improved variational inference with inverse autoregressive flow. Advances in Neural Informa-
+     tion Processing Systems, 29, 2016.
+[55] Nikita Kitaev, Łukasz Kaiser, and Anselm Levskaya. Reformer: The efficient transformer.
+     arXiv preprint arXiv:2001.04451, 2020.
+[56] Rithesh Kumar, Sherjil Ozair, Anirudh Goyal, Aaron Courville, and Yoshua Bengio. Maximum
+     entropy generators for energy-based models. arXiv preprint arXiv:1901.08508, 2019.
+[57] Naoto Kunitomo and Seisho Sato. A robust-filtering method for noisy non-stationary multi-
+     variate time series with econometric applications. Japanese Journal of Statistics and Data
+     Science, 4(1):373–410, 2021.
+[58] Guokun Lai, Wei-Cheng Chang, Yiming Yang, and Hanxiao Liu. Modeling long-and short-
+     term temporal patterns with deep neural networks. In International ACM SIGIR Conference
+     on Research & Development in Information Retrieval, pages 95–104, 2018.
+[59] Brenden M Lake, Tomer D Ullman, Joshua B Tenenbaum, and Samuel J Gershman. Building
+     machines that learn and think like people. Behavioral and Brain Sciences, 40, 2017.
+[60] Colin Lea, Rene Vidal, Austin Reiter, and Gregory D Hager. Temporal convolutional networks:
+     A unified approach to action segmentation. In European Conference on Computer Vision,
+     pages 47–54. Springer, 2016.
+[61] Shiyang Li, Xiaoyong Jin, Yao Xuan, Xiyou Zhou, Wenhu Chen, Yu-Xiang Wang, and Xifeng
+     Yan. Enhancing the locality and breaking the memory bottleneck of transformer on time series
+     forecasting. Advances in Neural Information Processing Systems, 32, 2019.
+[62] Yaguang Li, Rose Yu, Cyrus Shahabi, and Yan Liu. Diffusion convolutional recurrent neural
+     network: Data-driven traffic forecasting. In International Conference on Learning Representa-
+     tions, 2018.
+[63] Yingzhen Li and Richard E Turner. Rényi divergence variational inference. Advances in
+     Neural Information Processing Systems, 29, 2016.
+[64] Yuening Li, Zhengzhang Chen, Daochen Zha, Mengnan Du, Denghui Zhang, Haifeng
+     Chen, and Xia Hu. Learning disentangled representations for time series. arXiv preprint
+     arXiv:2105.08179, 2021.
+[65] Zengyi Li, Yubei Chen, and Friedrich T Sommer. Learning energy-based models in
+     high-dimensional spaces with multi-scale denoising score matching. arXiv preprint
+     arXiv:1910.07762, 2019.
+[66] Chi-Jie Lu, Tian-Shyug Lee, and Chih-Chou Chiu. Financial time series forecasting using
+     independent component analysis and support vector regression. Decision Support Systems,
+     47(2):115–125, 2009.
+[67] Danielle C Maddix, Yuyang Wang, and Alex Smola. Deep factors with Gaussian processes for
+     forecasting. arXiv preprint arXiv:1812.00098, 2018.
+[68] James E Matheson and Robert L Winkler. Scoring rules for continuous probability distributions.
+     Management Science, 22(10):1087–1096, 1976.
+[69] Nam Nguyen and Brian Quanz. Temporal latent auto-encoder: A method for probabilistic
+     multivariate time series forecasting. In AAAI Conference on Artificial Intelligence, volume 35,
+     pages 9117–9125, 2021.
+[70] Alexander Quinn Nichol and Prafulla Dhariwal. Improved denoising diffusion probabilistic
+     models. In International Conference on Machine Learning, pages 8162–8171. PMLR, 2021.
+
+
+                                               14
+[71] Fotios Petropoulos, Rob J Hyndman, and Christoph Bergmeir. Exploring the sources of
+     uncertainty: Why does bagging for time series forecasting work? European Journal of
+     Operational Research, 268(2):545–554, 2018.
+
+[72] Yao Qin, Dongjin Song, Haifeng Chen, Wei Cheng, Guofei Jiang, and Garrison W Cottrell. A
+     dual-stage attention-based recurrent neural network for time series prediction. In International
+     Joint Conference on Artificial Intelligence, 2017.
+
+[73] Syama Sundar Rangapuram, Matthias W Seeger, Jan Gasthaus, Lorenzo Stella, Yuyang Wang,
+     and Tim Januschowski. Deep state space models for time series forecasting. Advances in
+     Neural Information Processing Systems, 31, 2018.
+
+[74] Kashif Rasul, Calvin Seward, Ingmar Schuster, and Roland Vollgraf. Autoregressive denois-
+     ing diffusion models for multivariate probabilistic time series forecasting. In International
+     Conference on Machine Learning, pages 8857–8868. PMLR, 2021.
+
+[75] Geoffrey Roeder, Yuhuai Wu, and David K Duvenaud. Sticking the landing: Simple, lower-
+     variance gradient estimators for variational inference. Advances in Neural Information Pro-
+     cessing Systems, 30, 2017.
+
+[76] David Salinas, Michael Bohlke-Schneider, Laurent Callot, Roberto Medico, and Jan Gasthaus.
+     High-dimensional multivariate forecasting with low-rank Gaussian copula processes. Advances
+     in Neural Information Processing Systems, 32, 2019.
+
+[77] David Salinas, Valentin Flunkert, Jan Gasthaus, and Tim Januschowski. DeepAR: probabilistic
+     forecasting with autoregressive recurrent networks. International Journal of Forecasting,
+     36(3):1181–1191, 2020.
+
+[78] Saeed Saremi, Aapo Hyvärinen, et al. Neural empirical Bayes. Journal of Machine Learning
+     Research, 2019.
+
+[79] Rajat Sen, Hsiang-Fu Yu, and Inderjit S Dhillon. Think globally, act locally: A deep neural
+     network approach to high-dimensional time series forecasting. Advances in Neural Information
+     Processing Systems, 32, 2019.
+
+[80] Alex Sherstinsky. Fundamentals of recurrent neural network (RNN) and long short-term
+     memory (LSTM) network. Physica D: Nonlinear Phenomena, 404:132306, 2020.
+
+[81] Qiquan Shi, Jiaming Yin, Jiajun Cai, Andrzej Cichocki, Tatsuya Yokota, Lei Chen, Mingxuan
+     Yuan, and Jia Zeng. Block hankel tensor ARIMA for multiple short time series forecasting. In
+     AAAI Conference on Artificial Intelligence, volume 34, pages 5758–5766, 2020.
+
+[82] Shun-Yao Shih, Fan-Keng Sun, and Hung-yi Lee. Temporal pattern attention for multivariate
+     time series forecasting. Machine Learning, 108(8):1421–1441, 2019.
+
+[83] Sameer Singh. Noisy time-series prediction using pattern recognition techniques. Computa-
+     tional Intelligence, 16(1):114–133, 2000.
+
+[84] Slawek Smyl and Karthik Kuber. Data preprocessing and augmentation for multiple short time
+     series forecasting with recurrent neural networks. In International Symposium on Forecasting,
+     2016.
+
+[85] Jascha Sohl-Dickstein, Eric Weiss, Niru Maheswaranathan, and Surya Ganguli. Deep un-
+     supervised learning using nonequilibrium thermodynamics. In International Conference on
+     Machine Learning, pages 2256–2265. PMLR, 2015.
+
+[86] Huan Song, Deepta Rajan, Jayaraman J Thiagarajan, and Andreas Spanias. Attend and
+     diagnose: Clinical time series analysis using attention models. In AAAI Conference on
+     Artificial Intelligence, 2018.
+
+[87] Yang Song and Stefano Ermon. Generative modeling by estimating gradients of the data
+     distribution. Advances in Neural Information Processing Systems, 32, 2019.
+
+
+                                                15
+ [88] Sana Tonekaboni, Shalmali Joshi, Kieran Campbell, David K Duvenaud, and Anna Goldenberg.
+      What went wrong and when? instance-wise feature importance for time-series black-box
+      models. Advances in Neural Information Processing Systems, 33:799–809, 2020.
+
+ [89] Arash Vahdat and Jan Kautz. NVAE: A deep hierarchical variational autoencoder. Advances
+      in Neural Information Processing Systems, 33:19667–19679, 2020.
+
+ [90] Pascal Vincent. A connection between score matching and denoising autoencoders. Neural
+      Computation, 23(7):1661–1674, 2011.
+
+ [91] Pascal Vincent, Hugo Larochelle, Isabelle Lajoie, Yoshua Bengio, Pierre-Antoine Manzagol,
+      and Léon Bottou. Stacked denoising autoencoders: Learning useful representations in a deep
+      network with a local denoising criterion. Journal of Machine Learning Research, 11(12),
+      2010.
+
+ [92] Julius Von Kügelgen, Yash Sharma, Luigi Gresele, Wieland Brendel, Bernhard Schölkopf,
+      Michel Besserve, and Francesco Locatello. Self-supervised learning with data augmentations
+      provably isolates content from style. Advances in Neural Information Processing Systems, 34,
+      2021.
+
+ [93] Juntao Wang, Wun Kwan Yam, Kin Long Fong, Siew Ann Cheong, and KY Wong. Gaussian
+      process kernels for noisy time series: Application to housing price prediction. In International
+      Conference on Neural Information Processing, pages 78–89. Springer, 2018.
+
+ [94] Satosi Watanabe. Information theoretical analysis of multivariate correlation. Ibm Journal of
+      Research and Development, 4(1):66–82, 1960.
+
+ [95] Ruofeng Wen, Kari Torkkola, Balakrishnan Narayanaswamy, and Dhruv Madeka. A multi-
+      horizon quantile recurrent forecaster. arXiv preprint arXiv:1711.11053, 2017.
+
+ [96] Mike West. Bayesian forecasting of multivariate time series: scalability, structure uncertainty
+      and decisions. Annals of the Institute of Statistical Mathematics, 72(1):1–31, 2020.
+
+ [97] Bingzhe Wu, Jintang Li, Chengbin Hou, Guoji Fu, Yatao Bian, Liang Chen, and Junzhou
+      Huang. Recent advances in reliable deep graph learning: Adversarial attack, inherent noise,
+      and distribution shift. arXiv preprint arXiv:2202.07114, 2022.
+
+ [98] Mike Wu, Michael Hughes, Sonali Parbhoo, Maurizio Zazzi, Volker Roth, and Finale Doshi-
+      Velez. Beyond sparsity: Tree regularization of deep models for interpretability. In AAAI
+      Conference on Artificial Intelligence, volume 32, 2018.
+
+ [99] Neo Wu, Bradley Green, Xue Ben, and Shawn O’Banion. Deep transformer models for time
+      series forecasting: The influenza prevalence case. arXiv preprint arXiv:2001.08317, 2020.
+
+[100] Zonghan Wu, Shirui Pan, Guodong Long, Jing Jiang, and Chengqi Zhang. Graph wavenet
+      for deep spatial-temporal graph modeling. In International Joint Conference on Artificial
+      Intelligence, pages 1907–1913, 2019.
+
+[101] Jiehui Xu, Jianmin Wang, Mingsheng Long, et al. Autoformer: Decomposition transform-
+      ers with auto-correlation for long-term series forecasting. Advances in Neural Information
+      Processing Systems, 34, 2021.
+
+[102] Tijin Yan, Hongwei Zhang, Tong Zhou, Yufeng Zhan, and Yuanqing Xia. ScoreGrad: Multi-
+      variate probabilistic time series forecasting with continuous energy-based generative models.
+      arXiv preprint arXiv:2106.10121, 2021.
+
+[103] Jinsung Yoon, Daniel Jarrett, and Mihaela Van der Schaar. Time-series generative adversarial
+      networks. Advances in Neural Information Processing Systems, 32, 2019.
+
+[104] Bing Yu, Haoteng Yin, and Zhanxing Zhu. Spatio-temporal graph convolutional networks: a
+      deep learning framework for traffic forecasting. In International Joint Conference on Artificial
+      Intelligence, pages 3634–3640, 2018.
+
+
+                                                 16
+[105] Yong Yu, Xiaosheng Si, Changhua Hu, and Jianxun Zhang. A review of recurrent neural
+      networks: LSTM cells and network architectures. Neural Computation, 31(7):1235–1270,
+      2019.
+[106] Haoyi Zhou, Shanghang Zhang, Jieqi Peng, Shuai Zhang, Jianxin Li, Hui Xiong, and Wancai
+      Zhang. Informer: Beyond efficient transformer for long sequence time-series forecasting. In
+      AAAI Conference on Artificial Intelligence, 2021.
+[107] Yong Zou, Reik V Donner, Norbert Marwan, Jonathan F Donges, and Jürgen Kurths. Complex
+      network approaches to nonlinear time series analysis. Physics Reports, 787:1–97, 2019.
+
+
+
+
+                                               17
+Checklist
+    1. For all authors...
+        (a) Do the main claims made in the abstract and introduction accurately reflect the paper’s
+            contributions and scope? [Yes]
+        (b) Did you describe the limitations of your work? [Yes] See Section 4 for details.
+        (c) Did you discuss any potential negative societal impacts of your work? [Yes] We discuss
+            the potential negative societal impacts in Section 4.
+        (d) Have you read the ethics review guidelines and ensured that your paper conforms to
+            them? [Yes]
+    2. If you are including theoretical results...
+        (a) Did you state the full set of assumptions of all theoretical results? [Yes] Our problem
+            formulation and theoretical proof are described in Section 2, and all the theoretical
+            results are with reasonable and necessary assumptions.
+        (b) Did you include complete proofs of all theoretical results? [Yes]
+    3. If you ran experiments...
+        (a) Did you include the code, data, and instructions needed to reproduce the main exper-
+            imental results (either in the supplemental material or as a URL)? [Yes] We use six
+            real-world datasets, for each of them is provided by URL or citation in Section 3.1.
+        (b) Did you specify all the training details (e.g., data splits, hyperparameters, how they
+            were chosen)? [Yes] See Section 3 and Appendix C
+        (c) Did you report error bars (e.g., with respect to the random seed after running experi-
+            ments multiple times)? [Yes] All the experimental results are repeated five times, the
+            mean and standard deviation of the results are provided in Section 3
+        (d) Did you include the total amount of compute and the type of resources used (e.g., type
+            of GPUs, internal cluster, or cloud provider)? [Yes] See Section 3.1
+    4. If you are using existing assets (e.g., code, data, models) or curating/releasing new assets...
+        (a) If your work uses existing assets, did you cite the creators? [Yes] The datasets and
+            baseline models that used in this paper are all cited in Section 3.1.
+        (b) Did you mention the license of the assets? [Yes]
+        (c) Did you include any new assets either in the supplemental material or as
+            a URL? [Yes] The newly introduced Wind dataset is publicly available
+            at            https://github.com/PaddlePaddle/PaddleSpatial/tree/main/
+            paddlespatial/datasets/WindPower.
+        (d) Did you discuss whether and how consent was obtained from people whose data you’re
+            using/curating? [Yes] The datasets used in this paper are all public datasets, and we
+            didn’t use/curate data from other people.
+        (e) Did you discuss whether the data you are using/curating contains personally identifiable
+            information or offensive content? [Yes] The data we use doesn’t contain any identifiable
+            information or offensive content.
+    5. If you used crowdsourcing or conducted research with human subjects...
+        (a) Did you include the full text of instructions given to participants and screenshots, if
+            applicable? [N/A]
+        (b) Did you describe any potential participant risks, with links to Institutional Review
+            Board (IRB) approvals, if applicable? [N/A]
+        (c) Did you include the estimated hourly wage paid to participants and the total amount
+            spent on participant compensation? [N/A]
+
+
+
+
+                                                18
+A     Related Work
+A.1   Time Series Forecasting
+
+We first briefly review the related literature of time series forecasting (TSF) methods as below.
+Complex temporal patterns can be manifested over short- and long-term as the time series evolves
+across time. To leverage the time evolution nature, existing statistical models, such as ARIMA [9]
+and Gaussian process regression [10] have been well established and applied to many downstream
+tasks [40, 42, 3]. Recurrent neural network (RNN) models are also introduced to model temporal
+dependencies for TSF in a sequence-to-sequence paradigm [35, 13, 95, 58, 67, 73, 77]. Besides,
+temporal attention [72, 86, 82] and causal convolution [4, 8, 79] are further explored to model the
+intrinsic temporal dependencies. Recent Transformer-based models have strengthened the capability
+of exploring hidden intricate temporal patterns for long-term TSF [101, 61, 99, 106]. On the other
+hand, the multivariate nature of TSF is another topic many works have been focusing on. These works
+treat a collection of time series as a unified entity and mine the inter-series correlations with different
+techniques, such as probabilistic models [77, 73], matrix/tensor factorization [79? ], convolution
+neural networks (CNNs) [4, 58], and graph neural networks (GNNs) [37, 62, 104, 100, 11].
+To improve the reliability and performance of TSF, instead of modeling the raw data, there exist
+works inferring the underlying distribution of the time series data with generative models [103, 18].
+Many studies have employed a variational auto-encoder (VAE) to model the probabilistic distribution
+of sequential data [29, 34, 16, 14, 69]. For example, VRNN [16] employs the VAE to each hidden
+state of RNN such that the variability of highly structured sequential data can be captured. To yield
+predictive distribution for multivariate TSF, TLAE [69] implements nonlinear transformation by
+replacing matrix factorization with encoder-decoder architecture and temporal deep temporal latent
+model. Another line of generative methods for TSF focus on energy-based models (EBMs), such
+as TimeGrad [74] and ScoreGrad [102]. EBMs do not place a restriction on the tractability of the
+normalizing constants [102]. Though flexible, the unknown normalizing constant makes the training
+of EBMs particularly difficult.
+This paper focuses on TSF with VAE-based models. Besides, as many real-world time series data
+are relatively short and small [84], a coupled probabilistic diffusion model is proposed to augment
+the input series, as well as the output series, simultaneously, such that the distribution space can be
+enlarged without increasing the aleatoric uncertainty [48]. Moreover, to guarantee the generated
+target series moving toward the true target, a multi-scaled score-matching denoising network is
+plugged in for accurate future series prediction. To the best of our knowledge, this is the first work
+focusing on generative TSF with the diffusion model and denoising techniques.
+
+A.2   Time Series Augmentation
+
+Both traditional methods and deep learning methods can deteriorate when limited time series data
+are encountered. Generating synthetic time series is commonly adopted for augmenting short time
+series [17, 25, 103]. Transforming the original time series by cropping, flipping and warping [46, 19]
+is another kind of approach dedicated to TSF when the training data is limited. Whereas the synthetic
+time series may not respect the original feature relationship across time, and the transformation
+methods do not change the distribution space. Thus, the overfitting issues cannot be avoided.
+Incorporating the probabilistic diffusion model for TSF differentiates our work from existing time
+series augmentation methods.
+
+A.3   Uncertainty Estimation and Denoising for Time Series Forecasting
+
+There exist works aiming to estimate the uncertainty [48] for time series forecasting [71, 96, 36]
+by epistemic uncertainty. Nevertheless, the inevitable aleatoric uncertainty of time series is often
+ignored, which may stem from error-prone data measurement, collection, and so forth [97]. Another
+line of studies focuses on the detection of noise in time series data [66] or devising suitable models
+for noise alleviation [33]. However, none of the existing works attempts to quantify the aleatoric
+uncertainty, which further differentiates our work from priors.
+It is necessary to relieve the effect of noise in real-world time series data [22]. [5, 57] propose to
+preprocess the time series with smoothing and filtering techniques. However, such preprocessing
+methods can only be applied to the noise raised by the irregular data of time series. Neural networks
+
+
+                                                   19
+are also introduced to denoise the time series [28, 83, 33, 47], while these deep networks can only
+deal with specific types of time series as well.
+
+A.4   Interpretability of Time Series Forecasting
+
+A number of works put effort to explain the deep neural networks [98, 49, 2] to make the prediction
+more interpretable, but these methods often lack reliability when the explanation is sensitive to
+factors that do not contribute to the prediction [52]. Several works have been proposed to increase the
+reliability of TSF tasks [44, 45]. For multivariate time series, the interpretability of the representations
+can be improved by mapping the time series into latent space [27]. Besides, recent works have been
+proposed to disentangle the latent variables to identify the independent factors of the data, which can
+further lead to improved interpretability of the representation and higher performance [39, 59, 50].
+The disentangled VAE has been applied to time series to benefit the generated results [64]. However,
+the choice of the latent variables is crucial for the disentanglement of time series data. We devise
+a bidirectional VAE (BVAE) and take the dimensions of each latent variable as the factors to be
+disentangled.
+
+B     Proofs of Lemma 1 and Lemma 2
+With the coupled diffusion process and Eqs. (5) and (6), as well as Proposition 1, introduced in
+the main text, the diffused target series and generated target series can be decomposed as Ye (t) =
+           (t)                          (t)
+⟨Ye (t) , δYe ⟩ and Yb (t) = ⟨Yb (t) , δYb ⟩. Then, we can draw the following two conclusions:
+Lemma 1. ∀ε > 0, there exists a probabilistic model fϕ,θ := (pϕ , pθ ) to guarantee that
+          (t)        (t)               (t)
+DKL (q(Yer )||pθ (Ybr )) < ε, where Ybr = fϕ,θ (X (t) ).
+Proof. According to Proposition 1, Ybr can be fully captured by the model. That is, ∥Yr − Ybr ∥ −→ 0
+where Yr is the ideal part of ground truth target series Y . And, with Eq. (6) (in the main text),
+   (t) p                       (t)     (t)
+Yer = ᾱt′ Yr . Therefore, ∥Yer − Ybr ∥ −→ 0 when t → ∞.
+
+Lemma 2. With the coupled diffusion process, the difference between diffusion noise and generation
+                                            (t)        (t)
+noise will be reduced, i.e., limt→∞ DKL (q(δYe )||pθ (δYb |Z (t) )) < DKL (q(ϵY )||pθ (ϵYb )) .
+Proof. According to Proposition 1, the noise of Y consists of the estimation noise ϵYb and residual
+noise δY , i.e., ϵY = ⟨ϵYb , δY ⟩ where ϵYb and δY are independent of each other, then q(ϵY ) =
+q(ϵYb )q(δY ). Let ∆ = DKL (q(ϵY )||pθ (ϵYb )) − DKL (q(ϵYb )||pθ (ϵYb )), we have
+             ∆ = DKL (q(ϵYb )q(δY )||pθ (ϵYb )) − DKL (q(ϵYb )||pθ (ϵYb ))
+                = DKL (q(ϵYb )||pθ (ϵYb )) + DKL (q(δY )||pθ (ϵYb )) − DKL (q(ϵYb )||pθ (ϵYb ))
+                = DKL (q(δY )||pθ (ϵYb )) > 0 ,
+                                                                                                  (t)   (t)
+which leads to DKL (q(ϵY )||pθ (ϵYb )) > DKL (q(ϵYb )||pθ (ϵYb ) > 0. Moreover, both δYe and δYb
+                                                                             (t)       (t)
+are Gaussian noises, when t → ∞, ∃ ε′ > 0, we have DKL (q(δYe )||pθ (δYb |Z (t) )) ≤ ε′ <
+DKL (q(ϵY )||pθ (ϵYb )).
+
+
+C     Extra Implementation Details
+C.1   Experimental Settings
+
+Datasets Description. The main descriptive statistics of the real-world datasets adopted in the
+experiments of this work are demonstrated in Table 5.
+Input Representation. We adopt the embedding method introduced in [106] and feed it to an RNN
+to extract the temporal dependency. Then we concatenate them as follows:
+                              Xinput = CONCAT(RNN(E(X)), E(X)) ,
+
+
+                                                    20
+                     Table 5: Statistical descriptions of the real-world datasets.
+                          Full Data              Sliced Data
+ Datasets # Dims.                                                   Target Variable Time Interval
+                      Time Span # Points Pct. of Full Data # Points
+  Traffic     862     2015-2016    17544           5%           877      Sensor 862         1 hour
+Electricity   321     2011-2014    18381           3%           551       MT_321           10 mins
+ Weather      21      2020-2021    36761           2%           735      CO2 (ppm)         10 mins
+ ETTm1         7      2016-2018    69680           1%           697          OT            15 mins
+ ETTh1         7      2016-2018    17420           5%           871          OT             1 hour
+  Wind         7      2020-2021    45550           2%           911      wind_power        15 mins
+
+
+
+
+ Figure 6: Forecasting process of DeepAR, TimeGrad, and GP-copula. The sliding step is set to 1.
+
+where X is the raw time series data and E(·) denotes the embedding operation. Here, we use a
+two-layer gated recurrent unit (GRU), and the dimensionality of the hidden state and embeddings are
+128 and 64, respectively.
+Diffusion Process Configuration. Besides, the diffusion process is configured to be βt ∈ [0, 0.1] and
+T = 100 for the Weather dataset, βt ∈ [0, 0.1] and T = 1000 for the ETTh1 dataset, βt ∈ [0, 0.08]
+and T = 1000 for the Wind dataset, and βt ∈ [0, 0.01] and T = 1000 for the other datasets.
+
+C.2   Implementation Details of Baselines
+
+We select previous state-of-the-art generative models as our baselines in the experiments on both
+synthetic datasets and real-world datasets. Specifically, 1) GP-copula [76] is a method based on the
+Gaussian process which is devoted to high dimensional multivariate time series, 2) DeepAR [77]
+combines traditional auto-regressive models with RNNs by modeling a probabilistic distribution in
+an auto-encoder fashion, 3) TimeGrad [74] is an auto-regressive model for multivariate probabilistic
+time series forecasting with the help of an energy-based model, 4) Vanilla VAE (VAE for short)
+[53] is a classical statistical variational inference method on top of auto-encoder, 5) NVAE [89] is a
+deep hierarchical VAE built for image generation using depth-wise separable convolutions and batch
+normalization, 6) factor-VAE (f-VAE for short) [50] disentangles the latent variables by encouraging
+the distribution of representations to be factorial and independent across dimensions, and 7) β-
+TCVAE [15] learns the disentangled representations with total correlation variational auto-encoder
+algorithm.
+To train DeepAR, TimeGrad, and GP-copula in accordance with their original settings, the batch is
+constructed without shuffling the samples. That is, the instances (sampled with the input-lx -predict-ly
+rolling window and lx = ly , as illustrated in Fig. 6) are fed to the training procedure of these three
+baselines in chronological order. Besides, these three baselines employ the cumulative distribution
+function (CDF) for training, so the CDF needs to be reverted to the real distribution for testing.
+For f-VAE, β-TCVAE, and VAE, since the dimensionality of different time series varies, we design a
+preprocess block to map the original time series into a tensor with the fix-sized dimensionality which
+can further suit the VAEs well. The preprocess block consists of three nonlinear layers with the sizes
+of the hidden states to be: {128, 64, 32}. For NVAE, we keep the original settings suggested in [89]
+and use Gaussian distribution as the prior. All the baselines are trained using early stopping and the
+patience is set to 5.
+
+
+                                                  21
+Table 6: Performance comparisons of short-term and long-term TSF in real-world datasets in terms
+of MSE and CRPS. For MSE and CRPS, the lower, the better. The best results are in boldface.
+Model             D3 VAE        NVAE        β-TCVAE         f-VAE       DeepAR       TimeGrad GP-copula           VAE
+                 0.081±.003   1.300±.024    1.003±.006    0.982±.059   3.895±.306    3.695±.246    4.299±.372   0.794±.130
+              8
+                 0.207±.003   0.593±.004    0.894±.003    0.666±.032   1.391±.071    1.410±.027    1.408±.046   0.759±.07
+                 0.081±.009   1.271±.019    0.997±.004    0.998±.042   4.140±.320    3.495±.362    4.575±.141   0.632±.057
+              16
+ Traffic
+
+
+
+
+                 0.200±.014   0.589±.001    0.893±.002    0.692±.026   1.338±.043    1.329±.057    1.506±.025   0.671±.038
+                 0.091±.007   0.126±.013    1.254±0.019   0.977±.002   4.234±.139    5.195±2.26    3.717±.361   0.735±.084
+              32
+                 0.216±.012   0.422±.012     0.9370.007   0.882±.001   1.367±.015    1.565±.329    1.342±.048   0.735±.048
+                 0.125±.005   1.263±0.014   0.903±.111    0.936±.190   3.381±.130    3.692±1.54    3.492±.092   0.692±.059
+              64
+                 0.244±.006   0.940±0.005   0.839±.062    0.829±.078   1.233±.027    1.412±0.257   1.367±.012   0.710±.035
+                 0.251±.015   1.134±.029    0.901±.052    0.893±.069   2.934±.173    2.703±.087    2.924±.218   0.853±.040
+              8
+                 0.398±.011   0.542±.003    0.831±.004    0.809±.024   1.244±.037    1.208±.024    1.249±.048   0.795±.016
+Electricity
+
+
+
+
+                 0.308±.030   1.150±.032    0.850±.003    0.807±.034   2.803±.199    2.770±.237    3.065±.186   0.846±.062
+              16
+                 0.437±.020   0.531±.003    0.814±.002    0.782±.024   1.220±.048    1.240±.048    1.307±.042   0.793±.029
+                 0.410±.075   1.302±0.011   0.844±.025    0.861±.105   2.402±.156    2.640±.138    2.880±.221   0.841±.071
+              32
+                 0.534±.058   0.944±0.005   0.808±.005    0.797±.037   1.130±.055    1.234±.027    1.281±.054   0.790±.026
+                 0.169±.022   0.801±.024    0.234±.042    0.591±.198   2.317±.357    2.715±.189    2.412±.761   0.560±.192
+              8
+                 0.357±.024   0.757±.013    0.404±.040    0.565±.080   0.858±.078    0.920±.013    0.897±.115   0.572±.077
+                 0.187±.047   0.811±.016    0.212±.012    0.530±.167   1.269±.187    1.110±.083    1.357±.145   0.424±.141
+ Weather
+
+
+
+
+              16
+                 0.361±.046   0.759±.009    0.388±.014    0.547±.067   0.783±.059    0.733±.016    0.811±.032   0.503±.068
+                 0.203±.008   0.836±0.014   0.439±.394    0.337±.086   2.518±.546    1.178±.069    1.065±.145   0.329±.083
+              32
+                 0.383±.007   0.777±0.007   0.508±.176    0.461±.031   0.847±.036    0.724±.021    0.747±.035   0.459±.045
+                 0.191±.022    0.9320.020   0.276±.026    0.676±.484   3.595±.956    1.063±.061    0.992±.114   0.721±.496
+              64
+                 0.358±.044    0.8360.009   0.463±.026    0.612±.176   0.994±.100    0.696±.011    0.699±.016   0.635±.204
+                 0.527±.073   0.921±.026    1.538±.254    2.326±.445   2.204±.420    1.877±.245    2.024±.143   2.375±.405
+              8
+                 0.5570.048   0.760±.026    1.015±.112    1.260±.167   0.984±.074    0.908±.038    0.961±.027   1.258±.104
+ ETTm1
+
+
+
+
+                 0.968±.104   1.100±.032    1.744±.100    2.339±.270   2.350±.170    2.032±.234    2.486±.207   2.321±.469
+              16
+                 0.821±.072   0.822±.026    1.104±.041    1.249±.088   0.974±.016    0.919±.031    0.984±.016   1.259±.132
+                 0.707±.061   1.298±.028    1.438±.429    2.563±.358   4.855±.179    1.251±.133    1.402±.187   2.660±.349
+              32
+                 0.697±.040   0.893±.010    0.953±.173    1.330±.104   1.787±.029    0.822±.032    0.844±.043   1.367±.083
+                 0.292±.036   0.483±.017    0.703±.054    0.870±.134   3.451±.335    4.259±1.13    4.278±1.12   1.006±.281
+              8
+                 0.424±.033   0.461±.011    0.644±.038    0.730±.060   1.194±.034    1.092±.028    1.169±.055   0.762±.115
+                 0.374±.061   0.488±.010    0.681±.018    0.983±.139   1.929±.105    1.332±.125    1.701±.088   0.681±.104
+              16
+ ETTh1
+
+
+
+
+                 0.488±.039   0.463±.018    0.640±.008    0.760±.062   1.029±.030    0.879±.037    0.999±.023   0.641±.055
+                 0.334±.008   0.464±0.007   0.477±.035    0.669±.092   6.153±.715    1.514±.042    1.922±.032   0.578±.062
+              32
+                 0.461±.004   0.543±0.004   0.537±.019    0.646±.048   1.689±.112    0.925±.016    1.068±.011   0.597±.035
+                 0.349±.039   0.425±.006    0.418±.021    0.484±.051   2.419±.520    1.1500.118    1.654±.117   0.463±.081
+              64
+                 0.473±.024    0.5230.004   0.517±.013    0.551±.027   1.223±.127    0.835±.045    0.987±.036   0.546±.042
+                 0.681±.075   1.854±.032    1.321±.379    1.942±.101   12.53±2.25    12.67±1.75    11.35±6.61   2.006±.145
+              8
+                 0.596±.052   1.223±.014    0.863±.143    1.067±.086   1.370±.107    1.440±.059    1.305±.369   1.103±.100
+                 1.033±.062   1.955±.015    0.894±.038    1.262±.178   13.96±.1.53   12.86±2.60    13.79±5.37   1.138±.205
+              16
+ Wind
+
+
+
+
+                 0.757±.053   1.247±.011    0.785±.037    0.843±.066   1.347±.060    1.240±.070    1.261±.171   0.862±.092
+                 1.224±.060   1.784±.011    1.266±.006    1.434±.126   5.398±.179    13.10±.955    15.331.904   1.480±.072
+              32
+                 0.869±.074   1.200±.007    0.872±.010    0.920±.077   1.434±.013    1.518±.020    1.614±.118   0.987±.010
+                 0.902±.024   1.652±.010    0.786±.022    0.898±.095   4.403±.301    3.857±.597    3.564±.293   1.374±1.02
+              64
+                 0.761±.021   1.167±.005    0.742±.017    0.789±.048   1.361±.021    1.110±.143    1.152±.081   0.842±.215
+
+
+
+
+                                                               22
+Table 7: Performance comparisons of TSF in 100%-Electricity and 100%-ETTm1 datasets in terms
+of MSE and CRPS. The best results are highlighted in boldface.
+    Model              D3 VAE       NVAE       β-TCVAE        f-VAE       DeepAR      TimeGrad GP-copula          VAE
+                     0.330±.033   1.408±.015   0.801±.001   0.765±.026   33.93±1.85   46.69±3.13   50.25±4.39   0.680±.022
+    Electricity
+                  16
+                     0.445±.020   0.999±.006   0.723±.001   0.710±.013   2.650±.030   2.702±.079   2.796±.072   0.675±.008
+                     0.336±.017   1.403±.014   0.802±.001   0.748±.033   46.10±2.00   30.94±1.70   32.13±1.96   0.727±.033
+                  32
+                     0.444±.015   0.997±.007   0.724±.001   0.703±.016   2.741±.011   2.476±.042   2.591±.064   0.692±.014
+                     0.018±.002   2.577±.047   0.918±.015   1.285±.236   73.82±3.25   68.26±2.04   66.97±2.02   1.335±.156
+                  16
+     ETTm1
+
+
+
+
+                     0.102±.003   1.5090.016   0.766±.005   0.911±.090   1.136±.013   1.153±.019   1.111±.016   0.923±.056
+                     0.034±.001   2.622±.057   0.929±.010   1.420±.073   68.11±2.60   53.47±26.1   63.67±1.14   1.223±.213
+                  32
+                     0.144±.006   1.524±.018   0.770±.004   0.960±.021   1.121±.024   1.083±.109   1.097±.008   0.888±.082
+
+
+
+D                 Supplementary Experimental Results
+
+D.1               Comparisons of Predictive Performance for TSF Under Different Settings
+
+Longer-Term Time Series Forecasting. To further inspect the performance of our method, we
+additionally conduct more experiments for longer-term time series forecasting. In particular, by
+configuring the output length with 32 and 646 , we compare D3 VAE to other baselines in terms of
+MSE and CRPS, and the results (including short-term and long-term) are reported in Table 6. We can
+conclude that D3 VAE also outperforms the competitive baselines consistently under the longer-term
+forecasting settings.
+Time Series Forecasting in Full Datasets. Moreover, we evaluate the predictive performance for
+time series forecasting in two “full-version” datasets, i.e. 100%-Electricity and 100%-ETTm1. The
+split of train/validation/test is 7:1:2 which is the same as the main experiments. The comparisons
+in terms of MSE and CRPS can be found in Table 7. With sufficient data, compared to previous
+state-of-the-art generative models, the MSE and CRPS reductions of our method are also satisfactory
+under different settings (including input-16-predict-16 and input-32-predict-32). For example, in
+Electricity dataset, compared to the second best results, D3 VAE achieves 52% (0.680 → 0.330) and
+54% (0.727 → 0.336) MSE reductions, and 34% (0.675 → 0.445) and 36% (0.692 → 0.444) CRPS
+reductions, under input-16-predict-16 and input-32-predict-32 settings, respectively.
+
+
+
+
+Figure 7: The case study of forecasting results on the Traffic dataset under input-32-predict-32
+settings. Only the last dimension is plotted. To demonstrate the forecasting results in a long range,
+we show the predictions of three cases that are ordered chronologically without overlapping.
+
+
+         6
+             The length of input time series is the same as the output time series.
+
+
+                                                                  23
+Figure 8: Case study of the forecasting results from the Electricity dataset (same settings as Fig. 7).
+
+
+
+
+Figure 9: Forecasting results (under the input-40-predict-40 setting) of a case from the Electricity
+dataset with ω increasing from 0.1 to 0.9.
+
+
+
+
+Figure 10: Forecasting results of a case from the Traffic dataset under the input-40-predict-40 setting.
+
+
+
+
+Figure 11: Sensitivity analysis of the trade-off hyperparameters in reconstruction loss L. To highlight
+the changes in prediction performance against hyperparameters, the relative value of MSE is used.
+
+D.2   Case Study
+
+We showcase the prediction results of our model and seven baseline models on the Traffic and
+Electricity datasets in Figs. 7 and 8. Our model can provide the most accurate forecasting results in
+terms of trends and variations.
+
+D.3   The Effect of Scale Parameter ω
+
+We demonstrate the forecasting results with different values of ω on Electricity and Traffic datasets,
+and the results are plotted in Figs. 9 and 10. It can be depicted that larger or smaller ω would lead
+
+
+                                                  24
+Table 8: Performance comparisons of D3 VAE w.r.t. varying the length of (input and output) time
+series and the data size. The results are reported on the Electricity dataset.
+                                           Percentage of Full Electricity Data
+ Length Metric
+                       100%       80%        60%          40%           20%        10%          5%
+              MSE 0.258±.019 0.227±.016 0.368±.019 0.389±.034 3.861±.480 0.693±.223 0.206±.018
+      8
+              CRPS 0.383±.015 0.355±.015 0.453±.009 0.504±.034 1.728±.110 0.673±.132 0.352±.016
+              MSE 0.330±.033 0.253±.018 0.343±.024 0.463±.089 4.428±.694 0.401±.068 0.247±.056
+    16
+              CRPS 0.445±.020 0.373±.014 0.433±.015 0.562±.049 1.858±.147 0.496±.047 0.378±.036
+              MSE 0.336±.017 0.300±.039 0.484±.048 0.739±.209 5.029±.811 0.884±.237 0.304±.094
+    32
+              CRPS 0.444±.015 0.413±.034 0.537±.025 0.693±.099 1.989±.172 0.723±.112 0.418±.065
+
+Table 9: Performance comparisons of D3 VAE w.r.t. varying the length of (input and output) time
+series and the data size. The results are reported on the Traffic dataset.
+                                             Percentage of Full Traffic Data
+ Length Metric
+                       100%       80%        60%         40%            20%        10%          5%
+              MSE 0.370±.021 0.215±.016 0.063±.002 0.062±.002 0.054±.004 0.210±.012 0.081±.003
+      8
+              CRPS 0.415±.013 0.347±.015 0.184±.003 0.179±.005 0.172±.008 0.251±.005 0.207±.003
+              MSE 0.272±.007 0.189±.006 0.063±.001 0.058±.003 0.056±.003 0.178±.006 0.081±.009
+      16
+              CRPS 0.334±.009 0.321±.008 0.180±.002 0.168±.006 0.169±.005 0.239±.007 0.200±.003
+              MSE 0.307±.015 0.197±.005 0.064±.002 0.063±.002 0.056±.004 0.191±.011 0.091±.007
+      32
+              CRPS 0.363±.008 0.335±.004 0.179±.002 0.179±.003 0.170±.005 0.235±.008 0.216±.012
+
+
+
+to deviated prediction which is far from the ground truth. Therefore, the value of ω does affect the
+prediction performance, which should be tuned properly.
+
+D.4        Sensitivity Analysis of Trade-off Parameters in Reconstruction Loss L
+
+To examine the effect of the trade-off hyperparameters in loss L, we plot the mean square error (MSE)
+against different values of trade-off parameters, i.e. ψ, λ and γ, in the Traffic dataset. Note that
+the relative value of MSE is plotted to ensure the difference is distinguishable. This experiment is
+conducted under different settings: input-8-predict-8, input-16-predict-16, and input-32-predict-32.
+For ψ, the value ranges from 0 to 0.8, λ ranges from 0 to 1.6, and γ ranges from 0 to 0.5. The results
+are shown in Fig. 11. We can see that the performance of the model varies slightly as the trade-off
+parameters take different values, which shows that our model is robust enough against different
+trade-off parameters.
+
+D.5        Scalability Analysis of Varying Time Series Length and Dataset Size
+
+We additionally investigate the scalability of D3 VAE against different lengths of the time series and
+varying amounts of available data. The experiments are conducted on the Electricity and Traffic
+datasets, and the results are reported in Tables 8 and 9, respectively. We can observe that the predictive
+performance of D3 VAE is relatively stable under different settings. In particular, the longer target
+series to predict the worse performance might be obtained. Besides, when the amount of available
+data is shrunk, D3 VAE performs more stable than expected. Note that on the 20%-Electricity dataset,
+the performance of D3 VAE is much worse than other subsets of the Electricity dataset, this is mainly
+because the sliced 20%-Electricity dataset involves more irregular values.
+
+E      Disentanglement for Time Series Forecasting
+Fig. 13 illustrates the disentanglement of latent variable Z for time series forecasting. It is difficult
+to choose suitable disentanglement factors under the unsupervised learning of disentanglement.
+
+
+                                                   25
+    # factors = 2
+    # factors = 4
+    # factors = 6
+    # factors = 8
+    # factors = 10
+    # factors = 12
+
+
+
+
+Figure 12: We showcase an instance from the Electricity dataset and demonstrate the results when
+different numbers of factors in disentanglement are adopted. For each row, from left to right, the
+prediction result of TSF, the learning curve of the discriminator, and the total correlation are plotted,
+respectively.
+
+
+
+
+                                                   26
+Figure 13: Disentangling latent variable Z of time series. Specifically, the input X is first mapped into
+Z. Then ∀zi ∈ Z is decomposed as zi = [zi,1 , · · · , zi,m ] and the metric of total correlation is utilized
+to minimize the inter-dependencies among “hand-crafted” factors. In this way, the disentangled
+factors tend to be not only discriminative but also informative.
+
+Algorithm 3 Train a discriminator for time series disentanglement.
+ 1: repeat
+ 2:   Initialize the loss of a discriminator Dφ : L(Dφ ) = 0
+ 3:   Decompose the latent variable generated in Algorithm 1 as zi = [zi,1 , zi,2 , ..., zi,m ] (i = 1, · · · , n)
+ 4:   for zi in Z doP
+ 5:       L=L+ m       j=1 ∥Dφ (zi,j ) − j∥
+                                            2
+
+ 6:   end for
+ 7:   Optimize the discriminator: φ ← argmin(L)
+ 8: until Convergence
+
+
+
+Therefore, we attempt to inspect the TSF performance against different numbers of factors to be disen-
+tangled. We implement a simple classifier as a discriminator to further evaluate the disentanglement
+quality in Fig. 12 (and Algorithm 3 demonstrates the training procedure of the discriminator). To be
+specific, we take different dimensions of Z as the factors to be disentangled: zi = [zi,1 , · · · , zi,m ]
+(zi ∈ Z), then an instance consisting of factor and label (zi,j , j) is constructed. We shuffle these m
+examples for each zi and attempt to classify them with a discriminator, then the disentanglement can
+be evaluated by measuring the loss of the discriminator. The learning curve of the discriminator can
+be leveraged to assess the disentanglement, and the discriminator is implemented by an MLP with six
+nonlinear layers and 100 hidden states. The results of prediction, discriminator loss, and the total
+correlation w.r.t. different numbers of factors are plotted in Fig. 12, respectively. As shown in Fig. 12,
+the number of factors does affect the prediction performance, as well as the disentanglement quality.
+On the other hand, the learning curves can be converged when different number of factors are adopted,
+which validates that the disentanglement of the latent factors is of high quality.
+In addition to the above method evaluating the disentanglement indirectly, we adopt another metric
+named Mutual Information Gap (MIG) [15] to evaluate the quality of disentanglement in a more
+straightforward way. Specifically, for a latent variable zi ∈ Z, the mutual information between zi,j ,
+and a factor vk ∈ [1, m] can be calculated by
+                                                        X
+                   Id (zi,j , vk ) = Eq(zi,j ,vk ) [log   q(zi,j |d)p(d|vk )] + H(zi,j ) ,      (16)
+                                                       d∈Svk
+
+where d denotes the sample of zi,j and Svk is the support set of vk . Then, for zi,j
+                                    m
+                           1 X 1
+             M IG(zi,j ) =            (max(Id (zi,j , vk )) − submax(Id (zi,j , vk ))) ,                        (17)
+                           m 1 H(vk )
+
+
+                                                         27
+            (a)                        (b)                      (c)                        (d)
+Figure 14: We evaluate the quality of disentanglement on ETTm1 and ETTh1 datasets in terms of
+mutual information gap (MIG). (a-b) The scatter plots of the MIG against varying weights γ in loss
+function (refer to Eq. (14) in the main text). (c-d) MIG v.s. different numbers of factors.
+
+
+where submax means the second max value of Id (zi,j , vk ), then the MIG of Z can be obtained as
+                                n                                     m
+                                X                                 1 X
+                   M IG(Z) =           M IG(zi ),   M IG(zi ) =         M IG(zi,j ) .                (18)
+                                 i=1
+                                                                  m j=1
+
+We evaluate the quality of disentanglement in terms of MIG on ETTm1 and ETTh1 datasets, respec-
+tively, which can be seen in Fig. 14. From Figs. 14a and 14b, when the weight of disentanglement (i.e.,
+γ in Eq. (14) of the main text) grows, the disentangled factors are of higher quality. In other words,
+the latent variables can be disentangled with the help of the disentanglement module in D3 VAE. In
+addition, we examine the changes in MIG against different numbers of factors. We can observe that
+the difficulty of disentanglement climbs up as the number of factors increases.
+
+F    Model Inspection: Coupled Diffusion Process
+To gain more insights into the coupled diffusion process, we demonstrate how a time series can be
+diffused under different settings in terms of variance schedule β and the max number of diffusion
+steps T . The examples are illustrated in Fig. 15. It can be seen that when larger diffusion steps or a
+wider variance schedule is employed, the diffused series deviates far from the original data gradually,
+which may result in the loss of useful signals, like, temporal dependencies. Therefore, it is important
+to choose a suitable variance schedule and diffusion steps to ensure that the distribution space is
+deviated enough without losing useful signals.
+
+G    Necessity of Data Augmentation for Time Series Forecasting
+Limited data would result in overfitting and poor performance. To demonstrate the necessity of
+enlarging the size of data for time series forecasting when deep models are employed, we implement
+a two-layer RNN and evaluate how many time points are required to ensure the generalization ability.
+A synthetic dataset is adopted for this demonstration.
+According to [23], we generate a toy time series dataset with n time points in which each point is a
+d-dimension variable:
+        wt = 0.5wt−1 + tanh(0.5wt−2 ) + sin(wt−3 ) + ϵ ,          X = [w1 , w2 , ..., wn ] ∗ F + v
+where wt ∈ R2 , F ∈ R2×d ∼ U[−1, 1], ϵ ∼ N (0, I), v ∼ N (0, 0.5I), and d = 5. An input-8-
+predict-8 window is utilized to roll this synthetic dataset. We split this synthetic dataset into training
+and test sets with a ratio of 7:3. We train the RNN in 100 epochs at most, and the MSE loss of training
+and testing are plotted in Fig. 16. It can be seen that the inflection points of the loss curves move
+back gradually and disappear as increasing the size of the dataset. Besides, with fewer time points,
+like, 400, the model can be overfitted more easily.
+
+
+
+
+                                                    28
+          (a) βt ∈ [0, 0.1]     (b) βt ∈ [0, 0.2]        (c) βt ∈ [0, 0.3]      (d) βt ∈ [0, 0.4]
+T = 10
+T = 50
+T = 100
+T = 200
+T = 400
+T = 600
+T = 800
+T = 900
+
+
+
+
+Figure 15: Diffused time series with different variance schedules and diffusion steps. We randomly
+choose a sample series from the synthetic dataset D2 and plot the original time series data, as well as
+the diffused series.
+
+
+
+
+                                                    29
+        (a) 400 time points.               (b) 800 time points.             (c) 1000 time points.
+
+
+
+
+                                                                                                       ‘
+       (d) 1200 time points.              (e) 1400 time points.             (f) 1600 time points.
+Figure 16: The curves of training and testing losses when the available time series data are of different
+sizes.
+
+
+
+
+                                                   30
+

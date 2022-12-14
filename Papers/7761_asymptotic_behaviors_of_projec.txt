@@ -1,0 +1,794 @@
+      Asymptotic Behaviors of Projected Stochastic
+      Approximation: A Jump Diffusion Perspective
+
+
+                   Jiadong Liang                                     Yuze Han
+          School of Mathematical Sciences                 School of Mathematical Sciences
+                 Peking University                               Peking University
+             jdliang@pku.edu.cn                            hanyuze97@pku.edu.cn
+
+                     Xiang Li                                    Zhihua Zhang
+          School of Mathematical Sciences                School of Mathematical Sciences
+                 Peking University                              Peking University
+             lx10077@pku.edu.cn                          zhzhang@math.pku.edu.cn
+
+
+
+                                             Abstract
+         In this paper we consider linearly constrained stochastic approximation prob-
+         lems with federated learning as a special case. We propose a loopless projection
+         stochastic approximation algorithm (LPSA) to ensure feasibility by performing the
+         projection with probability pn at the n-th iteration. Considering a specific family of
+         the probability pn and step size ηn , we analyze our algorithm from an asymptotic
+         and continuous perspective. Using a novel jump diffusion approximation, we
+         show that the trajectories connecting those properly rescaled last iterates weakly
+         converge to the solution of specific stochastic differential equations (SDEs). By an-
+         alyzing SDEs, we identify the asymptotic behaviors of LPSA for different choices
+         of (pn , ηn ). We find the algorithm presents an intriguing asymptotic bias-variance
+         trade-off according to the relative magnitude of pn w.r.t. ηn . It brings insights on
+         how to choose appropriate {(pn , ηn )}n≥1 to minimize the projection complexity.
+
+
+1   Introduction
+Recently, a novel distributed computing paradigm that called Federated Learning (FL) has been
+proposed for collaboratively training a global model from data that remote clients hold [31]. As a
+standard optimization algorithm in FL, Local SGD alternates between running stochastic gradient
+descent (SGD) independently in parallel on different clients and averaging the sequences only once
+in a while. Put simply, it learns a shared global model via infrequent communication. Empirical
+investigation finds its superior performance in communication efficiency [30] and theoretical analysis
+toward it has already provided a complete picture [26, 1, 15, 42, 43, 15]. Among them, Li et al. [27]
+establishes a functional CLT that Local SGD with Polyak-Ruppert averaging simultaneously achieves
+the optimal asymptotic variance and diminishing average communication frequency. However, they
+are all derived from a discrete perspective.
+The use of a continuous-time stochastic process to characterize the entire trajectory of a discrete
+stochastic algorithm has been witnessed progresses in recent years, and we call it diffusion ap-
+proximation. The continuous approach has advantages in its rich toolbox and can provide intuitive
+explanation for uncanny phenomena that are intractable to analyze in discrete cases. It can also
+motivate new optimization algorithms and statistical inference methods. Current works applying
+diffusion approximation to stochastic optimization algorithms can be roughly divided into two classes.
+The first one is to interest the optimization algorithm as a numerical discretization of a specific
+stochastic differential equation (SDE) [14] in a finite time interval [0, T ]. When the step size η is
+
+36th Conference on Neural Information Processing Systems (NeurIPS 2022).
+sufficiently small and the length T (= nη) of the interval is fixed (n is the total iterations), such
+approximation is of high accuracy, and it is easy to analyze the geometric properties of our target
+algorithms [41, 23, 13, 7, 38, 34, 8]. However, this avenue is difficult to capture the convergence
+behaviors around the optimal point due to the fixed T .1 The second class comes up to solve the
+issue. It instead considers the iterates divided by a proper power function of step sizes. Under certain
+conditions, as n goes to infinity, the rescaled iterates would weakly converge to the stationary solution
+of corresponding SDEs [21, 35, 6, 9, 10]. In FL, to the best of our knowledge, no work considers
+analyzing Local SGD via the aspect, which is our focus here.
+However, it is not easy to serialize Local SGD iterates due to its double-loop nature. Recent
+researchers developed a new technique named as ‘loopless’ to simplify the two-loop structure for
+SVRG and Katyusha [16]. The key is to replace the hard loop with a probabilistic loop. Specifically,
+we will independently toss a (possibly biased) coin ωn with head probability pn at iteration n. When
+getting the head ωn = 1, we start a new loop and update the outer-loop intermediate variables; when
+getting the tail ωn = 0, we stay in the same loop and keep the intermediate variables. In this way, we
+obtain a loopless counterpart algorithm and do not need to distinguish inner and outer loops anymore.
+It facilitates theoretical analysis and typically does not deteriorate the convergence rate [12, 29, 28, 11].
+It is worth mentioning that Hanzely and Richtárik [12] first introduced the loopless technique to
+FL and obtained many efficient FL algorithms. Li [28] used a dynamic pn (which varies with n) to
+generalize the scope of original methods. We are then motivated to analyze a loopless version of
+Local SGD with decreasing pn , but from an asymptotic and continuous perspective.
+
+
+
+1.1        Contribution
+
+Our work is motivated by Local SGD but beyond it. In particular, for a general optimization problems
+with linear constrains (of which FL is a special case), we develop a loopless projection stochastic
+approximation method (LPSA) as a generalization of Local SGD (see Appendix A for more details).
+Such generality renders us the possibility to transfer our techniques and results to other linearly
+constrained problems. LPSA is affected by two important hyperparameters, namely the step size
+{ηn } and the projection probability {pn }. For the choices of ηn ∝ n−α and pn ∝ min{ηnβ , 1}, we
+derive a non-asymptotic convergence rate for different α ∈ (0, 1] and β ∈ (0, 1) in Theorem 3.1. We
+observe a phase transition for the convergence rate O(n−α min{1,2−2β} ) when β crosses 0.5.
+To derive asymptotic results, we obtain two sequences {un } and {vn } by orthogonal decomposition
+for the optimized sequence of LPSA. We then construct two sequences of processes which pass
+through the appropriately rescaled un and vn , respectively. We show rigorously, when the iteration
+goes to infinity, these two sequences of stochastic processes weakly converge to the solutions of
+specific SDEs that are driven by either a Brownian motion or a Poisson process. As a corollary,
+the rescaled last iterate of un (which we mainly care about) has a known asymptotic distribution
+(either Gaussian distribution in Theorem 3.3 or Dirac in Corollary 1). And the phase transition we
+mentioned above evolves into a trade-off between the bias caused by the low frequency projection
+and the fluctuation resulting from the gradient noise (see Section 3.2.3).
+Moreover, according to different convergence rate for every {(ηn , pn )} pair, we consider a selection
+scheme at the end of Section 3.2.3, which makes the algorithm have the same nonasymptotic
+convergence order as the conventional stochastic approximation and spend as little as possible on
+the projection operation which is usually expensive in practice. At the end, we conduct numerical
+experiments to confirm the theoretical results.
+From a technical level, we propose a novel proof technique to analyze the discontinuity brought by
+probabilistic projection. In particular, we borrow tools from jump diffusion and verify necessary
+conditions (e.g., stochastic tightness) to apply it. See the paragraph after Theorem 3.4 for a main idea.
+We believe our technique can extend to and help analyze other stochastic approximation algorithms
+which can be approximated by a jump diffusion.
+
+
+
+      1
+          A finite T implies not only the algorithm but also its corresponding SDE do not converge to the optimum.
+
+
+                                                          2
+2     Problem Formulation
+2.1   Loopless Projected Stochastic Approximation
+
+Notice that distributed optimization such as FL can be formulated as a global consensus problem
+which is a linearly constrained problem [5]. For the sake of simplicity and generality, we aim to solve
+the following problem
+                               min Eζ∼D f (x, ζ) subject to A⊤ x = 0                                (1)
+                                 x
+via a randomly (and infrequently) projected stochastic approximation algorithm. In particular, at
+iteration n, we first perform one step of SGD via
+                                 xn+ 21 = xn − ηn ∇f (xn ) + ηn ξn ,                               (2)
+
+where f (x) = Eζ∼D f (x, ζ) and ξn = ∇f (xn ) − ∇f (xn , ζn ). Here {ξn } is a martingale difference
+sequence (m.d.s.) under the natural filtration Fn+1 := σ(ζk , ωk ; k ≤ n+1). We then use the loopless
+trick introduced in the introduction, i.e., we independently cast a coin with the head probability pn
+and obtain the result ωn ∼ Bernoulli(pn ). If ωn = 1, we perform one step of projection to ensure
+xn+1 fall into the feasible region: xn+1 = PA⊥ (xn+ 12 ) where PA⊥ denotes the projection onto the
+null space of A⊤ . If ωn = 0, we assign xn+1 as the same value of xn+ 12 , i.e., xn+1 = xn+ 12 . It is
+clear this algorithm (2) mimics the behavior of Local SGD in FL settings (see Appendix A for the
+equivalence).
+
+2.2   Assumptions
+
+For the linearly constrained convex optimization problem (1), we make the following assumptions
+which are quite common in the literature. Without special clarification, ∥ · ∥ denotes the Euclidean
+norm for vectors and the spectral norm for matrices.
+Assumption 1 (Smoothness). We assume that f : Rd → R is L-smooth, that is,
+                         ∥∇f (x) − ∇f (y)∥ ≤ L∥x − y∥,          ∀ x, y ∈ Rd .
+Assumption 2 (Strong convexity). We assume that f : Rd → R is µ-strongly convex, that is,
+                                                  µ
+               f (x) − f (y) ≥ ⟨∇f (y), x − y⟩ + ∥x − y∥2 , ∀ x, y ∈ Rd .
+                                                  2
+Assumption 3 (Continuous Hessian matrix). We assume that f : Rd → R is Hessian Lipschitz, that
+is, there is a constant L̃ such that
+                         ∇2 f (x) − ∇2 f (y) ≤ L̃∥x − y∥,        ∀ x, y ∈ Rd .
+Assumption 4 (Continuous covariance matrix). Given an m.d.s. {ξt }, we denote the conditional
+covariance as E[ξt ξt⊤ |Ft ] = Σ(xt ) and assume it is L-Lipschitz continuous in the sense that
+
+                          ∥Σ(x) − Σ(y)∥2 ≤ L∥x − y∥,          ∀ x, y ∈ Rd .
+Assumption 5. For the m.d.s. {ξn }, we assume there exists a p > 2 such that the p-th moment of
+every element in {ξn } is uniformly bounded, that is,
+                                         sup E∥ξn ∥p < ∞.
+                                         n≥0
+
+
+The first three assumptions imply we consider the strongly convex case. The last two assumptions
+help us identify the asymptotic variance. Especially, the assumption of uniformly bounded p (p > 2)
+moments is typically required to establish central limit theorems [9, 10, 27]. Finally, we want to
+emphasize that the stationary condition for the problem (1) is different from unconstrained ones;
+∇f (x⋆ ) is not necessarily zero, however, its projection into the null space of A⊤ must be zero.
+Proposition 1 ([25], Corollary 2.1). Let PA be the projection onto the column space of A and PA⊥
+the projection onto the null space of A⊤ . Under Assumption 2, the solution of (1) is unique (denoted
+x⋆ ). Moreover, we have PA⊥ (∇f (x⋆ )) = 0.
+
+
+                                                  3
+2.3        Jump Diffusion
+
+Jump diffusion is a stochastic Lévy process that involves jumps and diffusion. Typically, the former
+is modeled by a Poisson process, while the latter is modeled as a Brownian motion. It has wide and
+important applications in physics, finance[36], and computer vision.
+We say a function f defined on R is càdlàg when f is right-continuous and has left limits everywhere.
+For a càdlàg process (Vs )s≥0 , we denote Vt− as the left limit of V· at time t. Let Nγ (t) denote the
+Poisson process with γ the intensity, which quantifies the number of jumps up to the time t and is
+clearly càdlàg. We use Nγ (dt) = Nγ (t) − Nγ (t−) ∈ {0, 1} to indicate whether Nγ jumps at time t
+    RT                  P
+and 0 g(t−)N(dt) = {t:Nγ (t)̸=Nγ (t−)} g(t−) to denote the integral that drives for a measurable
+function g(·). We will consider a special class of jump diffusion in the following form
+                           dXt = α(t, Xt )dt + β(t, Xt )dWt + φ(t, Xt− )Nγ (dt).                    (3)
+When the coefficient functions α(t, Xt ) and β(t, Xt ) satisfy conditions like linear growth and
+Lipschitz continuity, there exists a solution for the jump diffusion (3) (e.g., Theorem 1.19 in [33]).
+
+3         Main Results
+In the section, we are going to capture the convergence behaviors of our projected stochastic approxi-
+mation method (2) from both non-asymptotic and asymptotic perspectives. We consider a specific
+family of step size ηn and projection probability pn , namely, ηn = η0 n−α and pn = min{ηnβ , 1}
+indexed by 0 < α ≤ 1 and 0 ≤ β < 1, respectively. The choice of step sizes ηn has been used
+to establish CLTs [37, 27], while the choice of pn is quite novel. To provide a complete picture of
+convergence, we will consider almost all combinations of α and β.
+
+3.1        Non-asymptotic Analysis
+
+To provide the convergence rate, it is natural to focus on the projection of xn into the column space of
+A (since it is the easiest feasible solution one can obtain from xn ). Hence, we decompose the iterated
+xn into two orthogonal components xn := un + vn where un = PA⊥ (xn ) and vn = PA (xn ).2 We
+                                                     2
+specify the the convergence rate of E ∥un − x⋆ ∥ in terms of α, β and n in the following theorem.
+Theorem 3.1. Suppose that Assumptions 1, 2 and 4 hold. Let ηn = η0 n−α and pn = min{ηnβ , 1}
+with 0 ≤ β < 1. Then for (i) 0 < α < 1 or (ii) α = 1 with η0 > 2/µ (µ is the strong convexity
+parameter of the objective function f ), we have
+                                                   2
+                                     E ∥un − x⋆ ∥ = O(n−α min{1,2−2β} ).
+
+                                                                                                      2
+From Theorem 3.1, as β decreases, that is, the projection happens more frequently, E ∥un − x⋆ ∥
+converges faster. The rate is O(n−α ) when β < 0.5, while the rate is O(n−2α(1−β) ) when β > 0.5.
+Thus there exists a phase transition when β goes across 0.5, which implies we should analyze
+asymptotic performances for these two phases respectively. As an extreme, when β = 1, the
+algorithm is possible to disconverge in an artifact quadratic loss with a specific A (see Theorem 3.2).
+Though for a specific A, it could apply to FL (see Corollary 2 in Appendix A.2.1 for the detail).
+Theorem 3.2. If ηn = η0 n−α and pn = min{p0 ηn , 1} with 0 < α ≤ 1, for a specific A, there exists
+                                                                 2
+a quadratic function f (x) so that ∇2 f (x) ⪰ Id and E ∥un −x⋆ ∥ does not converge to 0. Here
+       d×d                              2                  2
+Id ∈ R     is the identity matrix, and ∇ f (x) ⪰ Id means ∇ f (x)−Id is positive semidefinite.
+
+3.2        Asymptotic Behavior of the Rescaled Trajectory
+
+In this section, we want to derive an asymptotic convergence for (2). Recall that there exists a
+                                                             2
+phase transition for the convergence rate of E ∥ut − x⋆ ∥ when β crosses 0.5, when the projection
+probability is set as pn = ηnβ . In the following, we will analyze the asymptotic behaviors of LSPA for
+the two cases β ∈ [0, 1/2) and β ∈ (1/2, 1).
+      2
+          One can check Proposition 4 in Appendix B to see why un is orthogonal to vn .
+
+
+                                                         4
+3.2.1   Case 1: Frequent Projection where β ∈ [0, 1/2)
+                                                                                                      ∗
+From an asymptotic perspective, the typical central limit theorem (CLT) claims ǔn := u√nη−x         n−1
+would weakly converge to a rescaled standard distribution [21]. It helps us capture the large-sample
+convergence behaviors and provide ways for future statistical inference. However, we can provide
+a stronger result that captures the asymptotic behavior of the whole trajectory. In particular, we
+                                                                                            (n)
+serialize the sequence {ǔn } by constructing a continuous random function (denoted ūt ) such that
+                 (n)
+it starts from ū0 = ǔn , and as t increases it will pass through ǔn+1 , ǔn+2 and so on. We will show
+                                (n)
+that such a random function ūt will weakly converge to the solution of a specific SDE. From the
+SDE, we can derive asymptotic variance of ǔn and the whole trajectory evolution.
+        (n)
+Since ūt should pass all {ǔk }k≥n , we can connect these discrete points by piecewise linear
+functions. To that end, we first derive the one-step relation between ǔn and ǔn+1 . In particular,
+                                             √
+                     ǔn+1 = ǔn − ηn bn + ηn ξn(1) ,                                                (4)
+                                                                 
+                                                     1                     1
+                        bn := PA⊥ ∇2 f (x⋆ ) −          1{α=1} Id ǔn + Rn ,                         (5)
+                                                    2η0                   ηn
+                                                           (1)
+where Rn stands for a high-order residual error, and ξn denotes the component of noise ξn on the
+null space of A. One can find the derivation of (4) in Appendix C.1. Roughly speaking, (4) can be
+viewed as a one-step Euler Maruyama discretization with timescale ηn for an SDE, which starts at
+                                                                         (1)
+ǔn with local drift coefficient bn and local diffusion coefficient var(ξn ).
+Definition 1 (Time interpolation). Let a positive sequence γ = {γn }∞n decrease to zero. For
+n ∈ N, t ≥ 0, define
+                     (         m
+                                        )            n−1
+                              X                      X
+   N (n, t, γ) = min m ≥ n :      γk > t , Γn (γ) =      γk , and tn (γ) = ΓN (n,t,γ) − Γn .
+                 m∈N
+                                  k=n                            k=1
+
+
+We introduce a time interpolation for the formal description of the continuous function and fur-
+ther analysis. Intuitively, N (n, t, γ) is the number of iterations m at which the sum of step sizes
+Pm+1
+   k=n+1 ηk is just larger than t and tn (γ) is the approximation of t when we only use step sizes
+{γk }k≥n . Since γn → 0, tn (γ) → t as n goes to infinity. A property of Definition 1 is that
+                                                                                     (n)
+N (n, Γm (γ) − Γn (γ), γ) = m for any m ≥ n. By now, we are ready to construct ūt . For a given
+             (n)
+n ∈ N, let ū0 = ǔn and define for t ≥ 0,
+                                                                              
+                                   N (n,t,η)−1                                
+                     (n)
+                                         X
+                   ūt = ǔn +                  ηk bk + (t − tn (η))bN (n,t,η)
+                                                                              
+                                         k=n
+                                                                                               (6)
+                                  N (n,t,η)−1
+                                        X √ (1) p                                
+                                                                         (1)
+                               +                 ηk ξk + t − tn (η)ξN (n,t,η) .
+                                                                                
+                                        k=n
+
+                                          (n)
+From the construction, we can see that ūt         = ǔn+k .
+                                           k (η)
+
+Theorem 3.3 (Diffusion Approximation). Let Assumptions 1-5 hold. The following family of
+                                   (n)
+continuous stochastic processes {ūt : t ≥ 0}∞n=1 weakly converges to the stationary weak solution
+of the following SDE:
+                                                      
+                                           1
+                                              1{α=1} Id Xt dt + PA⊥ Σ(x⋆ ) 2 dWt .
+                                                                               1
+              dXt = −PA⊥ ∇2 f (x⋆ ) −                                                          (7)
+                                          2η0
+                                     ∞
+Further, the rescaled sequence {ǔn }n=1 converges weakly to the invariant distribution of the dynam-
+ics (7), i.e., N (0, Σ̃). Here the variance Σ̃ satisfies the Lyapunov equation
+                                                                         
+                         1                                      1
+PA⊥ ∇2 f (x⋆ ) −            1{α=1} Id Σ̃ + Σ̃ ∇2 f (x⋆ ) −         1{α=1} Id PA⊥ = PA⊥ Σ(x⋆ )PA⊥ .
+                        2η0                                    2η0
+
+                                                     5
+Remark 1. By using the continuous time version of the Lyapunov theorem (Lemma 1 in [40]), the
+Lyapunov equation has a unique positive semidefinite solution (denoted Σ̃). From Theorem 3.3
+and Theorem 4.1.1 in [9], we can tell that when β ∈ [0, 21 ) our algorithm LPSA achieves the same
+asymptotic variance as SGD that also uses the same step size. The typical projected SGD corresponds
+to the case β = 0, while LPSA allows β to vary in [0, 12 ). One can reduce the projection frequency by
+increasing β (equivalently decreasing the probability pn ). Hence, when projection is expensive, LPSA
+is more efficient in performing projections due to its flexible and moderate projection frequency.
+
+Proof Idea of Theorem 3.3. We shed light on the proof idea of Theorem 3.3. From a high level, we
+leverage the general theory for operator semigroups, which are developed by Trotter and Kurtz [39, 17–
+19] and are used to analyze stochastic optimization algorithms in [9]. Our diffusion approximation
+results are built on it, but generalize it in the sense that we use the celebrated Prokhorov’s theorem to
+                                                                                            (n)
+extend to the whole trajectory. One difficulty is to prove the stochastic tightness of {ut }. To that
+end, we make use of a classic result (e.g. Theorem 7.3 of [4]).
+
+3.2.2   Case 2: Occasional Projection where β ∈ (1/2, 1)
+When we step into the low-frequency regime where β ∈ 21 , 1 , the situation totally changes.
+                                                                   
+Intuitively, when LPSA performs much less frequent projection, we will frequently use infeasible xt
+to update parameters, which accumulates residual errors. These errors would not only dominate and
+slow down the non-asymptotic convergence rate (see Theorem 3.1), but also change the asymptotic
+behavior. In this case, we should not only find the right timescale, but also need to figure out how
+these errors are accumulated. To solve the issue, we develop a new analysis routine. In the following,
+we consider pt = γηtβ with γ > 0.
+Our solution is to monitor another random process that is related with {vn }, which serves as a bridge
+to derive the asymptotic behavior of {un }. The right scale should make the scaled sequence have
+                                                                               β−1
+non-vanishing expected L2 norm. From Theorem 3.1, it should be v̌n = ηn−1          vn . In addition, given
+v̌n , the candidate value of v̌n+1 before tossing the coin ωn , can be derived from LPSA’s Algorithm 1
+in Appendix A, and we denote this candidate as v̌(n+1)− .
+
+                                      v̌(n+1)− := v̌n − ηnβ dn + ηnβ ξn(2) ,                                  (8)
+
+where dn = ∇f (x∗ ) + ηn−β Sn with Sn a residual error which satisfies ηn−β Sn = oP (1) (see
+                                       (2)
+Appendix C.2 for more details) and ξn stands for the component of noise ξn on the orthogonal
+                             ⊥
+complementary space A . Due to the probabilistic projection, v̌n+1 takes value v̌(n+1)− with
+probability 1 − γηnβ and takes value zero with probability γηnβ . Similar to the previous section, we
+                                         (n)
+then construct a càdlàg random process v̄t which starts from v̌n and will pass through {v̌(k)− }k≥n .
+We can connect these discrete points with a step function. It results in the following construction
+                                                                                                     
+       (n)     (n)                                 (2)
+     v̄t = v̄t (ηβ ) − t−tn (η β ) (dN (n,t,ηβ ) −ξN (n,t,ηβ ) ) if t ∈ tn (η β ), tn (η β )+ηtβ (ηβ ) ,
+                                  
+                n                                                                               n
+                                                                                                         (9)
+   (n)
+ v̄t (ηβ ) = v̌N (n,t,ηβ ) .
+    n
+
+                                      (n)
+From (9), we can claim that v̄t            β     = v̌N (n,t,ηβ )− for any t ≥ 0. With probability pN (n,t,ηβ ) ,
+                                       n (η )−
+                                                                   (n)
+v̌N (n,t,ηβ ) takes value zero, which causes the process v̄·             to change abruptly at the time tn (η β ).
+                                  (n)                                                         (n)
+These discontinuities about     v̄·
+                                  prevent the diffusion process from working on v̄· as the result of
+Theorem 3.3. Even so, the following theorem shows that we can still find a suitable process in the
+                                                (n)
+broader jump diffusion class to approximate v̄· .
+Theorem 3.4 (Jump Approximation). Let Assumptions 1, 2, 4 and 5 hold. The following family of
+                                (n)
+càdlàg stochastic processes {v̄t : t ≥ 0}∞  n=1 weakly converges to the stationary weak solution of
+the following SDE
+                               dYt = −∇f (x⋆ )dt − Yt− · Nγ (dt).                              (10)
+Here Nγ (t) represents Poisson process with intensity γ, and Nγ (dt) = Nγ (t) − Nγ (t−). Further,
+                            ∞
+                    {v̌n }n=1
+the rescaled sequence
+              ⋆
+                               weakly converges to the invariant distribution of the dynamics (10),
+         ∇f (x )         ∥∇f (x⋆ )∥
+i.e., − ∥∇f (x⋆ )∥ · E       γ        . Here E(θ) represents the exponential distribution with intensity θ1 .
+
+
+                                                          6
+                                                (n)
+Theorem 3.4 shows that the sequence {v̄t } constructed by shifting initial points will finally
+approximate a jump process with a constant drift as n goes to infinity. The SDE (10) sheds light on how
+  (n)
+v̄t (equivalently a rescaled version of vn ) move as t increases. As the error incurred by infrequent
+               (n)
+projections, v̄t will move towards the direction of ∇f (x∗ ) (due to the drift term −∇f (x⋆ )dt)
+and be periodically forced to set as zero vector ( due to the correcting term −Yt− · Nγ (dt)). From
+a qualitative perspective, the SDE (10) captures the periodical behavior of vn , hence it shows
+without projection the residual error will accumulate along the direction of ∇f (x⋆ ). As argued in
+Proposition 1, ∇f (x⋆ ) is unlikely to be zero in our constrained problems.
+                                        (n)
+The remaining issue is how to link {v̄t } to our target {un }. Similarly, we should consider a rescaled
+                                 1−β
+un , that is, ûn := (un − x⋆ )/ηn−1 . The following corollary, which is based on Theorem 3.4, shows
+                                                                                  ∗     0.5−β
+when β ∈ 2 , 1 , ûn converges to a non-zero vector. Recall that ǔn = u√nη−x
+               1
+                   
+                                                                               n−1
+                                                                                    = ηn−1    ûn . The
+                                                        0.5−β
+equation together with Corollary 1 implies ∥Eǔn ∥ = ηn−1     ∥Eûn ∥ → ∞. As a result, the bias in
+Corollary 1 instead of the Gaussian fluctuation in Theorem 3.3 becomes the leading term hindering
+the convergence.
+                                                      1
+Corollary 1. Let Assumptions 1- 3 hold. Then ûn := η1−β (un − x⋆ ) converges to a non-zero
+                                                     n−1
+         n                                 o†
+                            η0 1{α=1} I PA⊥
+vector γ1 PA⊥ ∇2 f (x⋆ ) − 1−β
+                                                                        
+                                                  PA⊥ ∇2 f (x⋆ )∇f (x⋆ ) in the L2 as n → ∞.
+Where G† denotes the pseudoinverse of the symmetric matrix G.
+
+Proof Idea of Theorem 3.4 The main proof idea is similar to that of Theorem 3.4 except that we
+need to handle the jump diffusion which introduces additional discontinuity. As a result, for each
+           (n)
+n ≥ 0, {v̄t }t≥n is càdlàg rather than continuous. We then use the approximation result for jump
+diffusions developed by Kushner [20] instead of Trotter and Kurtz’s theories. Furthermore, the tool
+for proving tightness also needs to change. We replace the classic tool in [4] with a generalized
+determination method, the latter used to establish the stochastic tightness for càdlàg processes (e.g.,
+Theorem 4.1 in [19]). The remaining issue is to figure out properties (e.g., the mixing nature) of (10).
+To that end, we establish the geometric ergodicity of Eq. (10) by combining the coupling method
+with the Itô’s formula for jump diffusions, and show that its invariant distribution exists uniquely.
+
+3.2.3   Summary and Discussion
+From Sections 3.2.1 and 3.2.2, for the choice pn ∝ ηnβ , when β varies, our algorithm has an interesting
+bias-variance tradeoff. In fact, Theorems 3.3 and 3.4 reveal that the fluctuation of un is of order
+     1
+O(ηn2 ) and the bias is of order O(ηn1−β ). When β ∈ [0, 1/2) the fluctuation caused by the randomness
+of gradient queries in every iteration dominates the optimization accuracy. And when β ∈ (1/2, 1),
+this indicator is manipulated by the biases formed by the accumulation of skewed updates in the
+unconstrained state within each ‘inner loop’.
+In practice, projection is expensive to perform. Hence, it is important to tune α and β so that the
+projection complexity is minimized as much as possible. We use the average projection complexity
+(APC) to quantify the projection efficiency. For a target accuracy ϵ > 0, APC is defined as the number
+of projections required to obtain an ϵ-accuracy feasible solution. We summarize the derived results
+and the corresponding APC in Table 1. We can see that APC is minimized when α → 1 and β → 0.5.
+In this case, APC is approaching √1ϵ .
+We find an interesting parallelism between LPSA and Local SGD. In the case of FL, projection
+complexity corresponds to communication complexity, because a synchronization in FL is essentially
+a projection in linearly constrained problems (see Appendix A for the equivalence). In [27], the
+authors analyzed the averaged communication complexity (ACC) for Local SGD with Polyak-Ruppert
+averaging.3 They considered a general case where the length of the m-th inner loop could be up
+to Em := mν with ν ∈ [0, 1). After Em steps of inner loop, communication would perform to
+synchronize local models. Hence, Em plays a role similar to pn in our paper. Li et al. [27] found
+that when ν ∈ [0, 1), the averaged Local SGD iterates enjoy an optimal asymptotic normality up
+    3
+     For a target accuracy ϵ > 0, ACC is defined as the number of communication required to obtain a ϵ-accuracy
+global parameter.
+
+
+                                                      7
+Table 1: (Non-)Asymptotic results and projection complexity under different choice of ηn and pn .
+The first two columns list the non-asymptotic and asymptotic results respectively, and the last column
+characterizes projection complexity.
+
+                        (α, β)                   E∥un − x⋆ ∥2                      Asymptotic behavior                            APC 1 
+                                                  O n1α 3.1
+                                                        
+           (0, 1] × [0, 1/2)                                                                    Normal 3.3                      O ϵβ− α
+                                                                                                                                  αβ−1 
+                                                     1
+                                                           
+           (0, 1] × (1/2, 1)                    O n2α(1−β)   3.1                                 Biased 1                      O ϵ 2α(1−β)
+
+                                              1
+to a known constant scale and its ACC is 1ϵ 1+ν . When ν → 1, ACC is approaching √1ϵ , similar
+to our case where APC converges to √1ϵ when α → 1 and β → 0.5. Actually, the √1ϵ average
+communication complexity is actually optimal for any first-order oracle distributed algorithms, as
+shown in [43]. Hence, it implies our LSPA is efficient and near optimal in projection, because we can
+always reduce FL as a special of (1).
+
+
+4   Experiments
+
+In this section, we validate our theoretical results through comprehensive experiments. Due to space
+limitations, we only show some representative results on synthetic datasets under FL settings. For the
+results on general linearly constrained problems, please refer to Appendix D.
+
+Experimental Setup We focus on classification problems with cross entropy loss, and ℓ22 regular-
+ization is imposed to ensure the strong convexity of the objective function. The synthetic datasets
+are generated by following [24]. There are K clients and the sample (xk , zk ) on the k-th client is
+modeled as xk ∼ N (νk , Λ) and zk = argmax(softmax(Wk xk + bk )) where Λ ∈ Rd×d is diagonal
+with the entry (j, j) equal to j −1.2 , Wk ∈ RC×d and bk ∈ RC . We consider two specific datasets.
+The first one is denoted by IID, where all the clients share the same Wk and bk , and νk ∼ N (0, Id ).
+For this one, we set K = 100, d = 60 and C = 10. The second one is denoted by Synthetic (a, b),
+where a and b control the heterogeneity across clients. Specifically, each entry of Wk and bk is
+modeled as N (µk , 1) with µk ∼ N (0, a) and νk ∼ N (ζk , I) with ζk ∼ N (0, bId ). For this dataset,
+we set K = 20, d = 10 and C = 5.
+We find that the results on IID are intuitive enough to demonstrate the convergence rates of the mean
+                                    2
+squared error (MSE) E ∥un − x⋆ ∥ and the asymptotic behavior of ǔn for β ∈ [0, 1/2). The results
+on Synthetic (a, b), a dataset with fewer parameters and more heterogeneity, are more appropriate
+to illustrate the asymptotic biased of ûn for β ∈ (1/2, 1). The full results on both the datasets are
+deferred to Appendix D.
+Convergence Rate We plot the log-log scale graphs of averaged MSEs over 5 repetitions on
+IID vs iterations in Figure 1. The value of α is set as {1, 0.8, 0.6} and the value of β is from
+{0, 0.2, 0.4, 0.6, 0.8}. For each repetition, we run 2000 steps of LPSA. By Theorem 3.1, the slope of
+the line in the log-log scale graph should be −α min{1, 2 − 2β}. This is in accordance with Figure 1
+when the iteration is larger than 100. For β ∈ [0, 1/2), the value of β does not affect the slope, while
+for β ∈ (1/2, 1), larger β and smaller α both lead to smoother lines.
+
+                                    = 1.0                                             = 0.8                                          = 0.6
+                                                  = 0.0                                            = 0.0                                         = 0.0
+                102                               = 0.2         102                                = 0.2         102                             = 0.2
+                                                  = 0.4                                            = 0.4                                         = 0.4
+                                                  = 0.6                                            = 0.6                                         = 0.6
+                101                               = 0.8         101                                = 0.8         101                             = 0.8
+          MSE
+
+
+
+
+                                                          MSE
+
+
+
+
+                                                                                                           MSE
+
+
+
+
+                100                                             100                                              100
+
+            10    1                                         10    1                                          10    1
+
+
+
+            10    2                                         10    2                                          10    2
+
+                      100   101           102     103                 100   101           102      103                 100   101           102   103
+                                  Iterations                                      Iterations                                       Iterations
+
+
+    Figure 1: The log-log scale graphs of averaged MSE on IID over 5 repetition vs iterations.
+
+
+
+                                                                                  8
+                  = 1.0, = 0.0                                = 1.0, = 0.2                                                Direction e1                                                 Direction e2
+                                               0.04                                                   1.00                                                          1.0
+ 0.04
+                                                                                                      0.75                                                          0.5
+                                               0.02
+ 0.02                                                                                                                                                               0.0
+                                                                                                      0.50
+                                                                                                                                                                    0.5
+                                               0.00                                                   0.25
+
+
+
+
+                                                                                           u n , e1
+
+
+
+
+                                                                                                                                                         u n , e2
+ 0.00
+                                                                                                                                                                    1.0
+                                                                                                      0.00
+                                               0.02                                                                                                                 1.5
+ 0.02                                                                                                 0.25
+                                                                                                                                                                    2.0
+                                                                                                      0.50
+ 0.04                                          0.04                                                                                                                 2.5
+
+                                                                                                             0   10000   20000 30000     40000   50000                    0   10000   20000 30000     40000   50000
+        0.04   0.02   0.00       0.02   0.04          0.04   0.02   0.00     0.02   0.04                                    Iterations                                                   Iterations
+
+
+
+Figure 2: The heatmaps of ǔn across two orthog- Figure 3: Trajectories of ûn along two random di-
+onal directions over 100 repetitions on IID.     rections over 5 repetitions on Synthetic (1, 1).
+
+
+Frequent Projection For α = 1 and β ∈ {0, 0.2}, we run 2000 steps of LPSA over 100 repetitions
+on IID and pick up the last 200 iterates. For these iterates, we compute the rescaled vectors ǔn and
+project them into a two-dimensional random subspace. Then we plot the heatmaps across the two
+dimensions in Figure 2. We observe that the cells near the origin have the lightest colors, and as we
+move away from the origin the cell color becomes darker. Since the cells with lighter colors imply
+more frequencies, these phenomenons agree with Theorem 3.3, where the limiting distribution of ǔn
+is Gaussian. The results with other values of α and β are deferred to Appendix D.4.
+Occasional Projection For α = 0.8 and β = 0.6, we run 50000 steps of LPSA over 5 repetition
+on Synthetic (1, 1). Then we compute the rescaled sequence ûn and project them along two
+random directions e1 and e2 . The trajectories depicted in Figure 3 show that the limits of ⟨ûn , e1 ⟩
+and ⟨ûn , e2 ⟩ are nonzero and verify the asymptotic biased of ûn mentioned in Corollary 1. The
+results with other values of α and β are deferred to Appendix D.6.
+
+5       Concluding Remarks
+In this paper we study the linearly constrained optimization problem. We propose the LPSA algorithm
+that is inspired by Local SGD. The probabilistic projection in LPSA follows the spirit of loopless
+methods [16, 12, 28] and simplifies the double-loop structure of original Local SGD, facilitating
+theoretical analysis. We thoroughly analyze the (non-)asymptotic properties of properly scaled
+trajectories obtained from {un } and discover an interesting phase transition where {un } changes
+from asymptotically normal to asymptotically biased as the projection frequency decreases. From a
+technical level, we generalize jump diffusion approximations to accommodate the particularity and
+discontinuity of LPSA.
+There are also√some open problems. It is unclear about the asymptotic behavior of un when β = 0.5,
+i.e., pn = Θ( η n ). The jump diffusion approach fails because we can’t analyze {un } via the length
+of {vn } anymore. It accounts for failure that {ǔn } and {v̌n } are incompatible in the sense that
+they use different time scales and the time interpolation. However, we speculate ǔn would finally
+converge weakly to a non-centred Gaussian distribution. In addition, it is also interesting to analyze
+the performance of projection complexity of LPSA. From Corollary 1, to achieve a better convergence
+rate at lower projection frequencies, we must overcome the asymptotically biased nature of un . One
+feasible approach is to build a ‘de-biasing’ algorithm which attenuates the effect of vn during the
+update of un . We leave them as future work.
+
+Acknowledgments and Disclosure of Funding
+This work has been supported by the National Natural Science Foundation of China (No. 12271011).
+
+
+
+
+                                                                                           9
+References
+ [1] Ahmed Khaled Ragab Bayoumi, Konstantin Mishchenko, and Peter Richtárik. Tighter theory
+     for local SGD on identical and heterogeneous data. In International Conference on Artificial
+     Intelligence and Statistics, pages 4519–4529, 2020.
+ [2] Pascal Bianchi, Gersende Fort, and Walid Hachem. Performance of a distributed stochastic
+     approximation algorithm. IEEE Transactions on Information Theory, 59(11):7405–7418, 2013.
+ [3] Patrick Billingsley. Probability and measure. John Wiley & Sons, 2008.
+ [4] Patrick Billingsley. Convergence of probability measures. John Wiley & Sons, 2013.
+ [5] Stephen Boyd, Neal Parikh, Eric Chu, Borja Peleato, Jonathan Eckstein, et al. Distributed opti-
+     mization and statistical learning via the alternating direction method of multipliers. Foundations
+     and Trends® in Machine learning, 3(1):1–122, 2011.
+ [6] Jianqing Fan, Wenyan Gong, Chris Junchi Li, and Qiang Sun. Statistical sparse online regression:
+     A diffusion approximation perspective. In International Conference on Artificial Intelligence
+     and Statistics, pages 1017–1026. PMLR, 2018.
+ [7] Yuanyuan Feng, Tingran Gao, Lei Li, Jian-Guo Liu, and Yulong Lu. Uniform-in-time
+     weak error analysis for stochastic gradient descent algorithms via diffusion approximation.
+     Communications in Mathematical Sciences, 18(1):163–188, 2020.
+ [8] Xavier Fontaine, Valentin De Bortoli, and Alain Durmus. Convergence rates and approximation
+     results for SGD and its continuous-time counterpart. In Conference on Learning Theory, pages
+     1965–2058. PMLR, 2021.
+ [9] S. Gadat. Stochastic Optimization algorithms. 2012.
+[10] Sébastien Gadat, Fabien Panloup, and Sofiane Saadane. Stochastic heavy ball. Electronic
+     Journal of Statistics, 12(1):461–529, 2018.
+[11] Matilde Gargiani, Andrea Zanelli, Andrea Martinelli, Tyler Summers, and John Lygeros. PAGE-
+     PG: A simple and loopless variance-reduced policy gradient method with probabilistic gradient
+     estimation. arXiv preprint arXiv:2202.00308, 2022.
+[12] Filip Hanzely and Peter Richtárik. Federated learning of a mixture of global and local models.
+     arXiv preprint arXiv:2002.05516, 2020.
+[13] Li He, Qi Meng, Wei Chen, Zhi-Ming Ma, and Tie-Yan Liu. Differential equations for
+     modeling asynchronous algorithms. In Proceedings of the 27th International Joint Conference
+     on Artificial Intelligence, pages 2220–2226, 2018.
+[14] Peter Kloeden and Eckhard Platen. Numerical solution of stochastic differential equations.
+     IEEE transactions on neural networks / a publication of the IEEE Neural Networks Council,
+     19:1991, 12 2008.
+[15] Anastasia Koloskova, Nicolas Loizou, Sadra Boreiri, Martin Jaggi, and Sebastian Stich. A
+     unified theory of decentralized SGD with changing topology and local updates. In International
+     Conference on Machine Learning, pages 5381–5393. PMLR, 2020.
+[16] Dmitry Kovalev, Samuel Horváth, and Peter Richtárik. Don’t jump through hoops and remove
+     those loops: SVRG and Katyusha are better without the outer loop. In Algorithmic Learning
+     Theory, pages 451–467. PMLR, 2020.
+[17] Thomas G Kurtz. Extensions of Trotter’s operator semigroup approximation theorems. Journal
+     of Functional Analysis, 3(3):354–375, 1969.
+[18] Thomas G Kurtz. A general theorem on the convergence of operator semigroups. Transactions
+     of the American Mathematical Society, 148(1):23–32, 1970.
+[19] Thomas G Kurtz. Semigroups of conditioned shifts and approximation of Markov processes.
+     The Annals of Probability, pages 618–642, 1975.
+
+
+                                                 10
+[20] Harold J Kushner. A martingale method for the convergence of a sequence of processes to a
+     jump-diffusion process. Zeitschrift für Wahrscheinlichkeitstheorie und Verwandte Gebiete, 53
+     (2):207–219, 1980.
+[21] Harold J Kushner and Hai Huang. Asymptotic properties of stochastic approximations with
+     constant coefficients. SIAM Journal on Control and Optimization, 19(1):87–105, 1981.
+[22] Harold J Kushner and G Yin. Asymptotic properties of distributed and communicating stochastic
+     approximation algorithms. SIAM Journal on Control and Optimization, 25(5):1266–1290,
+     1987.
+[23] Qianxiao Li, Cheng Tai, and E Weinan. Stochastic modified equations and adaptive stochastic
+     gradient algorithms. In International Conference on Machine Learning, pages 2101–2110.
+     PMLR, 2017.
+[24] Tian Li, Anit Kumar Sahu, Manzil Zaheer, Maziar Sanjabi, Ameet Talwalkar, and Virginia
+     Smith. Federated optimization in heterogeneous networks. arXiv preprint arXiv:1812.06127,
+     2018.
+[25] Xiang Li and Zhihua Zhang. Delayed projection techniques for linearly constrained problems:
+     Convergence rates, acceleration, and applications. arXiv preprint arXiv:2101.01505, 2021.
+[26] Xiang Li, Wenhao Yang, Shusen Wang, and Zhihua Zhang. Communication efficient decentral-
+     ized training with multiple local updates. arXiv preprint arXiv:1910.09126, 2019.
+[27] Xiang Li, Jiadong Liang, Xiangyu Chang, and Zhihua Zhang. Statistical estimation and
+     inference via local sgd in federated learning. arXiv preprint arXiv:2109.01326, 2021.
+[28] Zhize Li. ANITA: An optimal loopless accelerated variance-reduced gradient method. arXiv
+     preprint arXiv:2103.11333, 2021.
+[29] Zhize Li, Hongyan Bao, Xiangliang Zhang, and Peter Richtárik. PAGE: A simple and optimal
+     probabilistic gradient estimator for nonconvex optimization. In International Conference on
+     Machine Learning, pages 6286–6295. PMLR, 2021.
+[30] Tao Lin, Sebastian U Stich, and Martin Jaggi. Don’t use large mini-batches, use local sgd.
+     arXiv preprint arXiv:1808.07217, 2018.
+[31] Brendan McMahan, Eider Moore, Daniel Ramage, Seth Hampson, and Blaise Aguera y Arcas.
+     Communication-efficient learning of deep networks from decentralized data. In Artificial
+     Intelligence and Statistics (AISTATS), 2017.
+[32] Yurii Nesterov. Lectures on Convex Optimization. 2018.
+[33] Bernt Øksendal and Agnes Sulem. Stochastic Control of jump diffusions. Springer, 2005.
+[34] Antonio Orvieto and Aurelien Lucchi. Continuous-time models for stochastic optimization
+     algorithms. Advances in Neural Information Processing Systems, 32, 2019.
+[35] Mariane Pelletier. Weak convergence rates for stochastic approximation with application to
+     multiple targets and simulated annealing. Annals of Applied Probability, pages 10–44, 1998.
+[36] Eckhard Platen and Nicola Bruti-Liberati. Numerical solution of stochastic differential
+     equations with jumps in finance, volume 64. Springer Science & Business Media, 2010.
+[37] Boris Teodorovich Polyak. Gradient methods for minimizing functionals.              Zhurnal
+     Vychislitel’noi Matematiki i Matematicheskoi Fiziki, 3(4):643–653, 1963.
+[38] Maxim Raginsky, Alexander Rakhlin, and Matus Telgarsky. Non-convex learning via stochastic
+     gradient Langevin dynamics: a nonasymptotic analysis. In Conference on Learning Theory,
+     pages 1674–1703. PMLR, 2017.
+[39] Hale F Trotter. Approximation of semi-groups of operators. Pacific Journal of Mathematics, 8
+     (4):887–919, 1958.
+
+
+                                               11
+[40] CZ Wei. Multivariate adaptive stochastic approximation. The annals of statistics, pages 1115–
+     1130, 1987.
+[41] Andre Wibisono, Ashia C Wilson, and Michael I Jordan. A variational perspective on accelerated
+     methods in optimization. proceedings of the National Academy of Sciences, 113(47):E7351–
+     E7358, 2016.
+[42] Blake Woodworth, Kumar Kshitij Patel, Sebastian Stich, Zhen Dai, Brian Bullins, Brendan
+     Mcmahan, Ohad Shamir, and Nathan Srebro. Is local SGD better than minibatch SGD? In
+     International Conference on Machine Learning, pages 10334–10343. PMLR, 2020.
+[43] Blake E Woodworth, Kumar Kshitij Patel, and Nati Srebro. Minibatch vs local SGD for
+     heterogeneous distributed learning. In Advances in Neural Information Processing Systems,
+     volume 33, pages 6281–6292, 2020.
+
+
+
+
+                                                12
+Checklist
+    1. For all authors...
+        (a) Do the main claims made in the abstract and introduction accurately reflect the paper’s
+            contributions and scope? [Yes] See the Introduction part and the comparison with
+            previous works in Appendix A.
+        (b) Did you describe the limitations of your work? [Yes] See Section 5.
+        (c) Did you discuss any potential negative societal impacts of your work? [N/A] Our work
+            is purely theoretical.
+        (d) Have you read the ethics review guidelines and ensured that your paper conforms to
+            them? [Yes]
+    2. If you are including theoretical results...
+        (a) Did you state the full set of assumptions of all theoretical results? [Yes]
+        (b) Did you include complete proofs of all theoretical results? [Yes] They are all deferred
+            in the appendix.
+    3. If you ran experiments...
+        (a) Did you include the code, data, and instructions needed to reproduce the main experi-
+            mental results (either in the supplemental material or as a URL)? [Yes] We describe
+            the experimental details in Appendix D.
+        (b) Did you specify all the training details (e.g., data splits, hyperparameters, how they
+            were chosen)? [Yes] See Appendix D.
+        (c) Did you report error bars (e.g., with respect to the random seed after running experi-
+            ments multiple times)? [No]
+        (d) Did you include the total amount of compute and the type of resources used (e.g., type
+            of GPUs, internal cluster, or cloud provider)? [No] Our experiments use synthetic
+            datasets to validate the theoretical results. It is easy to reproduce the experiments on an
+            average computer using only CPUs.
+    4. If you are using existing assets (e.g., code, data, models) or curating/releasing new assets...
+        (a) If your work uses existing assets, did you cite the creators? [N/A]
+        (b) Did you mention the license of the assets? [N/A]
+        (c) Did you include any new assets either in the supplemental material or as a URL? [N/A]
+
+        (d) Did you discuss whether and how consent was obtained from people whose data you’re
+            using/curating? [N/A]
+        (e) Did you discuss whether the data you are using/curating contains personally identifiable
+            information or offensive content? [N/A]
+    5. If you used crowdsourcing or conducted research with human subjects...
+        (a) Did you include the full text of instructions given to participants and screenshots, if
+            applicable? [N/A]
+        (b) Did you describe any potential participant risks, with links to Institutional Review
+            Board (IRB) approvals, if applicable? [N/A]
+        (c) Did you include the estimated hourly wage paid to participants and the total amount
+            spent on participant compensation? [N/A]
+
+
+
+
+                                                13
+
